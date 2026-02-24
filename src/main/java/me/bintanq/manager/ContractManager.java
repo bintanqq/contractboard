@@ -10,16 +10,31 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
- * Central manager for all contract operations.
- * Holds the in-memory cache of active contracts and handles their lifecycle.
+ * Central manager for all contract lifecycle operations.
+ *
+ * Tax model:
+ *   Contractor pays reward + tax at creation time.
+ *   Worker always receives the full reward.
+ *   Tax is a permanent money sink — not refunded on cancel.
+ *   On cancel: only the reward (not tax) is sent to mail.
+ *
+ * Contract limits:
+ *   Checked against player permissions / config before accepting payment.
+ *   Counts OPEN + ACCEPTED + PAUSED contracts owned by the contractor.
+ *
+ * Expiration:
+ *   Runs on a SINGLE scheduled async task every 30 seconds.
+ *   Expired contracts are processed in a batch: all DB writes for that
+ *   batch are submitted to the DB executor sequentially (no nested schedulers).
  */
 public class ContractManager {
 
     private final ContractBoard plugin;
 
-    // In-memory cache: contractId -> Contract
+    // In-memory cache of active contracts (thread-safe map, main-thread writes via callbacks)
     private final Map<Integer, Contract> activeContracts = new ConcurrentHashMap<>();
 
     private BukkitTask expirationTask;
@@ -29,74 +44,96 @@ public class ContractManager {
         loadContracts();
     }
 
-    // ---- Initialization ----
+    // ---- Startup ----
 
     private void loadContracts() {
         plugin.getDatabaseManager().loadActiveContracts(contracts -> {
             for (Contract c : contracts) {
                 activeContracts.put(c.getId(), c);
             }
-            plugin.getLogger().info("Loaded " + contracts.size() + " active contracts.");
+            plugin.getLogger().info("Loaded " + contracts.size() + " active contracts into cache.");
         });
     }
 
     // ---- Expiration Task ----
 
+    /**
+     * Starts the periodic expiration checker.
+     * Runs fully async (no main-thread involvement unless economy/mail callbacks need it).
+     * 600 ticks = 30 seconds between checks.
+     */
     public void startExpirationTask() {
-        // Check every 60 seconds for expired contracts
-        expirationTask = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, this::checkExpired, 1200L, 1200L);
+        expirationTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
+                plugin, this::processExpiredContracts, 1200L, 600L);
     }
 
-    private void checkExpired() {
+    /**
+     * Scans for expired contracts and handles them.
+     * Called from the async expiration thread — safe to call DB methods directly
+     * (DB executor is its own thread; we just submit work to it).
+     */
+    private void processExpiredContracts() {
         long now = System.currentTimeMillis();
+
+        // Snapshot the entries to expire to avoid ConcurrentModificationException
         List<Contract> toExpire = activeContracts.values().stream()
                 .filter(c -> c.isActive() && c.getExpiresAt() < now)
                 .toList();
 
+        if (toExpire.isEmpty()) return;
+
         for (Contract c : toExpire) {
-            expireContract(c);
+            // Remove from cache immediately so no new operations target this contract
+            activeContracts.remove(c.getId());
+            c.setStatus(ContractStatus.EXPIRED);
+
+            // Persist status change
+            plugin.getDatabaseManager().updateContract(c);
+
+            // Send reward back to contractor via mail (no callback needed)
+            plugin.getDatabaseManager().insertMail(
+                    c.getContractorUUID(),
+                    c.getReward(),
+                    "Expired contract #" + c.getId() + " (" + c.getType().name() + ")",
+                    null
+            );
         }
-    }
 
-    private void expireContract(Contract contract) {
-        contract.setStatus(ContractStatus.EXPIRED);
-        activeContracts.remove(contract.getId());
-        plugin.getDatabaseManager().updateContract(contract);
-
-        // Send reward to contractor's mail
-        plugin.getDatabaseManager().insertMail(
-                contract.getContractorUUID(),
-                contract.getReward(),
-                "Expired contract #" + contract.getId() + " (" + contract.getType().name() + ")",
-                null
-        );
-
-        plugin.getLogger().info("Contract #" + contract.getId() + " expired, reward sent to mail.");
+        if (!toExpire.isEmpty()) {
+            plugin.getLogger().info("[ContractBoard] Expired " + toExpire.size() + " contract(s).");
+        }
     }
 
     // ---- Contract Creation ----
 
     /**
-     * Creates and persists a new contract after deducting the reward + tax from the contractor.
-     * Returns the contract via callback on the main thread.
+     * Creates and persists a contract.
+     *
+     * Tax model: contractor pays reward + tax.
+     * Worker receives reward. Tax is a permanent sink.
+     *
+     * @param contractor The player creating the contract
+     * @param type       Contract type
+     * @param reward     Amount the worker will receive (NOT including tax)
+     * @param metadata   Type-specific metadata string
+     * @param callback   Called with the saved contract on success (main thread)
      */
-    public void createContract(Player contractor, ContractType type, double reward, String metadata,
-                               java.util.function.Consumer<Contract> callback) {
+    public void createContract(Player contractor, ContractType type, double reward,
+                               String metadata, Consumer<Contract> callback) {
         ConfigManager cfg = plugin.getConfigManager();
 
-        // Check feature enabled
+        // 1. Feature toggle
         boolean enabled = switch (type) {
             case BOUNTY_HUNT -> cfg.isBountyEnabled();
             case ITEM_GATHERING -> cfg.isItemGatheringEnabled();
             case XP_SERVICE -> cfg.isXPServiceEnabled();
         };
-
         if (!enabled) {
             contractor.sendMessage(cfg.getMessage("feature-disabled"));
             return;
         }
 
-        // Validate price range
+        // 2. Price validation
         if (reward < cfg.getMinPrice(type)) {
             contractor.sendMessage(cfg.getMessage("contract.reward-too-low")
                     .replace("{min}", String.valueOf(cfg.getMinPrice(type))));
@@ -108,15 +145,24 @@ public class ContractManager {
             return;
         }
 
-        double taxRate = cfg.getTaxRate(type);
-        double tax = reward * (taxRate / 100.0);
-        double totalCost = reward + tax; // reward is held in escrow, tax is consumed
+        // 3. Contract limit check
+        int activeOwned = countActiveContractsByContractor(contractor.getUniqueId());
+        int limit = cfg.getContractLimit(contractor);
+        if (activeOwned >= limit) {
+            contractor.sendMessage(cfg.getMessage("contract.limit-reached")
+                    .replace("{limit}", limit == Integer.MAX_VALUE ? "unlimited" : String.valueOf(limit)));
+            return;
+        }
 
-        // Check economy
+        // 4. Economy check — contractor pays reward + tax
         if (!plugin.hasEconomy()) {
             contractor.sendMessage(cfg.getMessage("economy-not-found"));
             return;
         }
+
+        double taxRate = cfg.getTaxRate(type);
+        double tax = reward * (taxRate / 100.0);
+        double totalCost = reward + tax; // reward → escrow, tax → permanent sink
 
         if (!plugin.getEconomy().has(contractor, totalCost)) {
             contractor.sendMessage(cfg.getMessage("contract.insufficient-funds")
@@ -124,37 +170,37 @@ public class ContractManager {
             return;
         }
 
-        // Deduct total cost (reward goes into escrow conceptually, tax is a sink)
+        // 5. Deduct money
         plugin.getEconomy().withdrawPlayer(contractor, totalCost);
 
-        // Build contract object
+        // 6. Build and persist contract
         long now = System.currentTimeMillis();
         long expires = now + cfg.getExpirationMillis(type);
 
-        Contract contract = new Contract(
-                -1, type,
+        Contract contract = new Contract(-1, type,
                 contractor.getUniqueId(), contractor.getName(),
-                reward, tax,
-                now, expires, metadata
-        );
+                reward, tax, now, expires, metadata);
 
-        // Persist and get ID back
         plugin.getDatabaseManager().insertContract(contract, inserted -> {
             if (inserted == null) {
-                // Refund on DB failure
+                // DB failure — refund everything
                 plugin.getEconomy().depositPlayer(contractor, totalCost);
-                contractor.sendMessage(cfg.getMessage("contract.not-found")); // generic error
+                contractor.sendMessage(cfg.colorize("&cFailed to create contract. Refunded."));
                 return;
             }
+
+            // Add to cache on main thread (safe)
             activeContracts.put(inserted.getId(), inserted);
 
-            // Update stats
-            plugin.getLeaderboardManager().addSpent(contractor.getUniqueId(), contractor.getName(), totalCost);
+            // Update leaderboard stats
+            plugin.getLeaderboardManager().recordSpent(
+                    contractor.getUniqueId(), contractor.getName(), totalCost);
 
-            String msg = cfg.getMessage("contract.created")
+            // Confirm to player
+            contractor.sendMessage(cfg.getMessage("contract.created")
                     .replace("{id}", String.valueOf(inserted.getId()))
-                    .replace("{tax}", String.format("%.2f", tax));
-            contractor.sendMessage(msg);
+                    .replace("{reward}", String.format("%.2f", reward))
+                    .replace("{tax}", String.format("%.2f", tax)));
 
             if (callback != null) callback.accept(inserted);
         });
@@ -168,12 +214,10 @@ public class ContractManager {
             worker.sendMessage(plugin.getConfigManager().getMessage("contract.not-found"));
             return;
         }
-
         if (contract.getStatus() != ContractStatus.OPEN) {
             worker.sendMessage(plugin.getConfigManager().getMessage("contract.already-accepted"));
             return;
         }
-
         if (contract.getContractorUUID().equals(worker.getUniqueId())) {
             worker.sendMessage(plugin.getConfigManager().getMessage("contract.cannot-self"));
             return;
@@ -189,6 +233,10 @@ public class ContractManager {
 
     // ---- Contract Cancellation ----
 
+    /**
+     * Cancels a contract. Only the contractor can cancel.
+     * Tax is NOT refunded. Reward is sent to contractor's mail.
+     */
     public void cancelContract(Player player, int contractId) {
         Contract contract = activeContracts.get(contractId);
         if (contract == null || !contract.getContractorUUID().equals(player.getUniqueId())) {
@@ -196,13 +244,17 @@ public class ContractManager {
             return;
         }
 
-        contract.setStatus(ContractStatus.CANCELLED);
         activeContracts.remove(contractId);
+        contract.setStatus(ContractStatus.CANCELLED);
         plugin.getDatabaseManager().updateContract(contract);
 
-        // Refund only the reward (tax was already consumed), send to mail in case offline
-        plugin.getDatabaseManager().insertMail(player.getUniqueId(), contract.getReward(),
-                "Cancelled contract #" + contractId + " reward refund", null);
+        // Refund reward only (tax stays consumed)
+        plugin.getDatabaseManager().insertMail(
+                player.getUniqueId(),
+                contract.getReward(),
+                "Cancelled contract #" + contractId + " refund",
+                null
+        );
 
         player.sendMessage(plugin.getConfigManager().getMessage("contract.cancelled")
                 .replace("{id}", String.valueOf(contractId)));
@@ -210,35 +262,39 @@ public class ContractManager {
 
     // ---- Contract Completion ----
 
+    /**
+     * Marks a contract complete and pays the worker the full reward.
+     * Must be called on the main thread (economy API requirement).
+     */
     public void completeContract(Contract contract, Player worker) {
-        contract.setStatus(ContractStatus.COMPLETED);
         activeContracts.remove(contract.getId());
+        contract.setStatus(ContractStatus.COMPLETED);
         plugin.getDatabaseManager().updateContract(contract);
 
-        // Pay the worker
+        // Pay worker the full reward (tax was already paid by contractor at creation)
         if (plugin.hasEconomy()) {
             plugin.getEconomy().depositPlayer(worker, contract.getReward());
         }
 
-        // Update stats
-        plugin.getLeaderboardManager().addEarned(worker.getUniqueId(), worker.getName(), contract.getReward());
+        // Update leaderboard
+        plugin.getLeaderboardManager().recordEarned(
+                worker.getUniqueId(), worker.getName(), contract.getReward());
 
         worker.sendMessage(plugin.getConfigManager().getMessage("contract.completed")
                 .replace("{id}", String.valueOf(contract.getId()))
                 .replace("{reward}", String.format("%.2f", contract.getReward())));
     }
 
-    // ---- Getters ----
+    // ---- Queries ----
 
-    public Map<Integer, Contract> getActiveContracts() { return Collections.unmodifiableMap(activeContracts); }
+    public Map<Integer, Contract> getActiveContracts() {
+        return Collections.unmodifiableMap(activeContracts);
+    }
 
     public Optional<Contract> getContract(int id) {
         return Optional.ofNullable(activeContracts.get(id));
     }
 
-    /**
-     * Get all open contracts of a given type for the GUI.
-     */
     public List<Contract> getOpenContracts(ContractType type) {
         return activeContracts.values().stream()
                 .filter(c -> c.getType() == type && c.getStatus() == ContractStatus.OPEN)
@@ -246,12 +302,18 @@ public class ContractManager {
                 .toList();
     }
 
-    /**
-     * Get contracts accepted by a specific worker.
-     */
     public List<Contract> getContractsByWorker(UUID workerUUID) {
         return activeContracts.values().stream()
                 .filter(c -> workerUUID.equals(c.getWorkerUUID()))
                 .toList();
+    }
+
+    /**
+     * Counts active (OPEN/ACCEPTED/PAUSED) contracts where this UUID is the contractor.
+     */
+    public int countActiveContractsByContractor(UUID contractorUUID) {
+        return (int) activeContracts.values().stream()
+                .filter(c -> c.isActive() && c.getContractorUUID().equals(contractorUUID))
+                .count();
     }
 }

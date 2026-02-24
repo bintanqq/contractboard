@@ -8,17 +8,21 @@ features:
   item-gathering: true
   xp-services: true
 
-# --- Tax Rates (percentage taken at creation time, non-refundable) ---
+# --- Tax Rates ---
+# Tax is paid BY THE CONTRACTOR on top of the reward.
+# Example: reward=100, tax=10% → contractor pays 110 total.
+# Worker always receives the full reward (100).
+# Tax is NON-REFUNDABLE on cancel.
 tax:
-  bounty-hunt: 5.0      # 5% of reward
-  item-gathering: 3.0   # 3% of reward
-  xp-services: 4.0      # 4% of reward
+  bounty-hunt: 5.0
+  item-gathering: 3.0
+  xp-services: 4.0
 
-# --- Contract Expiration (in hours) ---
+# --- Contract Expiration (in MINUTES) ---
 expiration:
-  bounty-hunt: 72
-  item-gathering: 48
-  xp-services: 24
+  bounty-hunt: 4320     # 72 hours = 4320 minutes
+  item-gathering: 2880  # 48 hours = 2880 minutes
+  xp-services: 1440     # 24 hours = 1440 minutes
 
 # --- Price Limits ---
 price-limits:
@@ -32,12 +36,20 @@ price-limits:
     min: 10.0
     max: 200000.0
 
+# --- Contract Limits ---
+# Maximum number of ACTIVE contracts a player can post simultaneously.
+# Players with the contractboard.max.<n> permission node override this.
+# Players with contractboard.max.unlimited have no limit.
+contract-limits:
+  # Default limit for players without a specific permission node.
+  default-max: 3
+
 # --- Bounty Hunt Settings ---
 bounty:
-  anonymous-extra-cost: 50.0      # Extra flat fee to post anonymously
-  bossbar-update-interval: 5      # Seconds between BossBar location updates
-  bossbar-color: YELLOW           # BossBar color: PINK, BLUE, RED, GREEN, YELLOW, PURPLE, WHITE
-  bossbar-style: SOLID            # BossBar style: SOLID, SEGMENTED_6, SEGMENTED_10, SEGMENTED_12, SEGMENTED_20
+  anonymous-extra-cost: 50.0
+  bossbar-update-interval: 5    # Seconds between BossBar location updates
+  bossbar-color: YELLOW         # PINK, BLUE, RED, GREEN, YELLOW, PURPLE, WHITE
+  bossbar-style: SOLID          # SOLID, SEGMENTED_6, SEGMENTED_10, SEGMENTED_12, SEGMENTED_20
 
 # --- XP Service Settings ---
 xp-services:
@@ -47,9 +59,6 @@ xp-services:
     - "&7Fill with &bXP&7 by killing mobs."
     - "&7Contract: &e{contract_id}"
     - "&7Progress: &a{current}&7/&a{required} &7points"
-
-# --- BossBar update frequency for item tracking ---
-bossbar-update-seconds: 5
 
 # --- Database ---
 database:

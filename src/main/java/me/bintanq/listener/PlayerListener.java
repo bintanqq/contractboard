@@ -2,7 +2,6 @@ package me.bintanq.listener;
 
 import me.bintanq.ContractBoard;
 import me.bintanq.model.Contract;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -10,19 +9,19 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.UUID;
 
 /**
- * Handles all player-facing event logic:
- * - Player kills (bounty resolution)
- * - Player disconnect (bounty pause)
- * - Player reconnect (bounty resume notification)
- * - Mob kills for XP grind contracts
- * - Prevents soul bottle pickup by non-owners
+ * Handles:
+ *  - Player kills → bounty resolution
+ *  - Mob kills → XP grind contract progress
+ *  - Player join → mail notification + bounty tracking resume
+ *  - Player quit → documented (BossBar task self-pauses when target offline)
+ *  - Item pickup → prevents non-owner from stealing Soul Bottles
  */
 public class PlayerListener implements Listener {
 
@@ -38,71 +37,69 @@ public class PlayerListener implements Listener {
     public void onEntityDeath(EntityDeathEvent event) {
         LivingEntity entity = event.getEntity();
         Player killer = entity.getKiller();
-
         if (killer == null) return;
 
-        // ---- Bounty: Player killed another player ----
+        // Player killed another player → check for bounty
         if (entity instanceof Player victim) {
             plugin.getBountyManager().handleKill(killer, victim);
             return;
         }
 
-        // ---- XP Grind: Mob killed, add XP to active grind session ----
+        // Mob killed → check if killer has an active XP grind session
         if (plugin.getXPServiceManager().getActiveGrindSessions().containsKey(killer.getUniqueId())) {
             int xpDropped = event.getDroppedExp();
             if (xpDropped > 0) {
-                // Cancel natural drop so only the grind session captures it
-                event.setDroppedExp(0);
+                event.setDroppedExp(0); // Capture XP into the grind session instead
                 plugin.getXPServiceManager().addGrindXP(killer, xpDropped);
             }
         }
     }
 
-    // ---- Bounty Pause on Disconnect ----
+    // ---- Player Quit ----
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        Player player = event.getPlayer();
-        UUID uuid = player.getUniqueId();
-
-        // If this player IS the target of any bounty, the BossBar update loop
-        // will naturally detect them as offline and pause the contract.
-        // We also stop any tracking the player themselves may have as a hunter.
-
-        // If the player is a hunter tracking someone, leave the task running
-        // (it will pause itself). No cleanup needed.
+        // If the quitting player is a HUNTER, their BossBar task continues running.
+        // The updateBossBar() method checks Bukkit.getPlayer(hunterUUID) and
+        // skips the update if the hunter is offline — so no wasted work occurs.
+        //
+        // If the quitting player is a BOUNTY TARGET, the next BossBar tick for their
+        // hunter(s) will detect target==null and auto-pause the contract.
+        //
+        // Nothing explicit needed here.
     }
+
+    // ---- Player Join ----
 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
 
-        // Notify if there are mail entries
+        // Notify about pending mail
         plugin.getDatabaseManager().getMailForPlayer(player.getUniqueId(), entries -> {
             if (!entries.isEmpty()) {
                 player.sendMessage(plugin.getConfigManager().colorize(
                         "&6[ContractBoard] &eYou have &a" + entries.size() +
-                                "&e pending mail item(s)! Use &a/contract mail&e to collect."));
+                                " &epending mail item(s). Use &a/contract mail &eto collect."));
             }
         });
 
-        // Resume tracking if they had an active bounty hunt (they rejoined as a hunter)
+        // Resume bounty tracking if this player was a hunter with a PAUSED bounty
         plugin.getContractManager().getContractsByWorker(player.getUniqueId()).stream()
                 .filter(c -> c.getType() == Contract.ContractType.BOUNTY_HUNT
-                        && c.getStatus() == Contract.ContractStatus.PAUSED
+                        && (c.getStatus() == Contract.ContractStatus.PAUSED
+                        || c.getStatus() == Contract.ContractStatus.ACCEPTED)
                         && plugin.getBountyManager().getBountyForHunter(player.getUniqueId()) == null)
                 .findFirst()
                 .ifPresent(c -> {
-                    // Resume tracking
-                    c.setStatus(Contract.ContractStatus.ACCEPTED);
-                    plugin.getDatabaseManager().updateContract(c);
+                    // Re-attach tracking (BossBar loop will auto-resume when target is online)
                     plugin.getBountyManager().startTracking(player, c);
                     player.sendMessage(plugin.getConfigManager().colorize(
-                            "&eBounty tracking resumed for contract #" + c.getId() + "."));
+                            "&eBounty tracking re-attached for contract &7#&e" + c.getId() + "&e."));
                 });
     }
 
-    // ---- Prevent Soul Bottle Theft ----
+    // ---- Soul Bottle Pickup Protection ----
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onItemPickup(EntityPickupItemEvent event) {
@@ -111,7 +108,6 @@ public class PlayerListener implements Listener {
         ItemStack item = event.getItem().getItemStack();
         if (!item.hasItemMeta()) return;
 
-        // Check if it's a soul bottle
         org.bukkit.NamespacedKey key = new org.bukkit.NamespacedKey(plugin,
                 me.bintanq.manager.XPServiceManager.SOUL_BOTTLE_KEY);
         org.bukkit.NamespacedKey cKey = new org.bukkit.NamespacedKey(plugin,
@@ -123,7 +119,6 @@ public class PlayerListener implements Listener {
         Integer contractId = pdc.get(cKey, org.bukkit.persistence.PersistentDataType.INTEGER);
         if (contractId == null) return;
 
-        // Only the assigned worker can pick it up
         Contract contract = plugin.getContractManager().getContract(contractId).orElse(null);
         if (contract != null && !player.getUniqueId().equals(contract.getWorkerUUID())) {
             event.setCancelled(true);

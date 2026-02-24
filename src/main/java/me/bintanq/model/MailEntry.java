@@ -3,7 +3,7 @@ package me.bintanq.model;
 import java.util.UUID;
 
 /**
- * Represents a pending mail entry for expired or completed contract rewards.
+ * Represents a pending mail entry for expired/cancelled/completed contract rewards.
  */
 public class MailEntry {
 

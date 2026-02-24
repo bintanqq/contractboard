@@ -11,18 +11,36 @@ import org.bukkit.Bukkit;
 import java.io.File;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 
 /**
  * Manages all SQLite database operations.
- * All write/read operations are dispatched asynchronously via the Bukkit scheduler,
- * with callbacks executed on the main thread when needed.
+ *
+ * Performance decisions:
+ *  - Uses a single-threaded {@link ExecutorService} for ALL DB work.
+ *    This avoids the "thread storm" problem where every operation spawns a
+ *    new Bukkit async task. One thread serializes all queries safely.
+ *  - SQLite WAL mode enabled for better concurrent read performance.
+ *  - Prepared statements are created fresh per call (connection is single-threaded,
+ *    so no need for a pool).
+ *  - Callbacks are dispatched back to the Bukkit main thread via runTask().
  */
 public class DatabaseManager {
 
     private final ContractBoard plugin;
     private Connection connection;
+
+    /**
+     * Single-threaded executor — guarantees all DB operations run sequentially
+     * on one background thread, eliminating race conditions on the connection.
+     */
+    private final ExecutorService dbExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "ContractBoard-DB");
+        t.setDaemon(true);
+        return t;
+    });
 
     public DatabaseManager(ContractBoard plugin) {
         this.plugin = plugin;
@@ -31,8 +49,7 @@ public class DatabaseManager {
     // ---- Connection ----
 
     /**
-     * Opens the SQLite connection and creates tables if they don't exist.
-     * Called synchronously on enable.
+     * Opens SQLite connection and creates schema. Runs synchronously on enable.
      */
     public boolean connect() {
         try {
@@ -40,10 +57,19 @@ public class DatabaseManager {
             File file = new File(plugin.getDataFolder(), dbFile);
             file.getParentFile().mkdirs();
 
-            String url = "jdbc:sqlite:" + file.getAbsolutePath();
-            connection = DriverManager.getConnection(url);
+            connection = DriverManager.getConnection("jdbc:sqlite:" + file.getAbsolutePath());
+
+            // Enable WAL mode — dramatically reduces lock contention for concurrent reads
+            try (Statement s = connection.createStatement()) {
+                s.execute("PRAGMA journal_mode=WAL");
+                // Synchronous=NORMAL is safe with WAL and much faster than FULL
+                s.execute("PRAGMA synchronous=NORMAL");
+                // Keep 64MB page cache in memory
+                s.execute("PRAGMA cache_size=-65536");
+            }
+
             createTables();
-            plugin.getLogger().info("Connected to SQLite database.");
+            plugin.getLogger().info("Connected to SQLite (WAL mode).");
             return true;
         } catch (SQLException e) {
             plugin.getLogger().log(Level.SEVERE, "Failed to connect to database.", e);
@@ -51,7 +77,20 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Gracefully shuts down the executor then closes the connection.
+     */
     public void disconnect() {
+        dbExecutor.shutdown();
+        try {
+            // Wait up to 5 seconds for pending writes to flush
+            if (!dbExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                dbExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            dbExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
         try {
             if (connection != null && !connection.isClosed()) {
                 connection.close();
@@ -63,7 +102,6 @@ public class DatabaseManager {
 
     private void createTables() throws SQLException {
         try (Statement stmt = connection.createStatement()) {
-            // Contracts table
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS contracts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,8 +118,6 @@ public class DatabaseManager {
                     metadata TEXT
                 )
             """);
-
-            // Player stats
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS player_stats (
                     uuid TEXT PRIMARY KEY,
@@ -92,8 +128,6 @@ public class DatabaseManager {
                     contracts_completed INTEGER DEFAULT 0
                 )
             """);
-
-            // Mail
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS mail (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,32 +137,51 @@ public class DatabaseManager {
                     created_at INTEGER NOT NULL
                 )
             """);
+            // Index for common queries
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_mail_recipient ON mail(recipient_uuid)");
         }
     }
 
-    // ---- Async helper ----
+    // ---- Async execution helpers ----
 
     /**
-     * Runs a database task asynchronously, then optionally calls back on the main thread.
+     * Submits a DB task to the single-threaded executor.
+     * On completion, the callback (if non-null) is dispatched on the Bukkit main thread.
      */
-    private <T> void async(java.util.concurrent.Callable<T> task, Consumer<T> callback) {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+    private <T> void async(Callable<T> task, Consumer<T> callback) {
+        dbExecutor.submit(() -> {
             try {
                 T result = task.call();
                 if (callback != null) {
                     Bukkit.getScheduler().runTask(plugin, () -> callback.accept(result));
                 }
             } catch (Exception e) {
-                plugin.getLogger().log(Level.SEVERE, "Async DB task failed.", e);
+                plugin.getLogger().log(Level.SEVERE, "DB task failed: " + e.getMessage(), e);
             }
         });
     }
 
+    /**
+     * Fire-and-forget variant for writes that need no callback.
+     */
+    private void asyncWrite(ThrowingRunnable task) {
+        dbExecutor.submit(() -> {
+            try {
+                task.run();
+            } catch (Exception e) {
+                plugin.getLogger().log(Level.SEVERE, "DB write failed: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
     // ---- Contract CRUD ----
 
-    /**
-     * Inserts a new contract and returns it (with auto-generated ID) via callback.
-     */
     public void insertContract(Contract contract, Consumer<Contract> callback) {
         async(() -> {
             String sql = """
@@ -150,19 +203,20 @@ public class DatabaseManager {
                 ps.setString(11, contract.getMetadata());
                 ps.executeUpdate();
 
-                ResultSet keys = ps.getGeneratedKeys();
-                if (keys.next()) {
-                    int id = keys.getInt(1);
-                    // Return a new instance with the generated ID
-                    Contract inserted = new Contract(id, contract.getType(),
-                            contract.getContractorUUID(), contract.getContractorName(),
-                            contract.getReward(), contract.getTaxPaid(),
-                            contract.getCreatedAt(), contract.getExpiresAt(), contract.getMetadata());
-                    inserted.setStatus(contract.getStatus());
-                    if (contract.getWorkerUUID() != null) {
-                        inserted.setWorker(contract.getWorkerUUID(), contract.getWorkerName());
+                try (ResultSet keys = ps.getGeneratedKeys()) {
+                    if (keys.next()) {
+                        int id = keys.getInt(1);
+                        Contract inserted = new Contract(id, contract.getType(),
+                                contract.getContractorUUID(), contract.getContractorName(),
+                                contract.getReward(), contract.getTaxPaid(),
+                                contract.getCreatedAt(), contract.getExpiresAt(),
+                                contract.getMetadata());
+                        inserted.setStatus(contract.getStatus());
+                        if (contract.getWorkerUUID() != null) {
+                            inserted.setWorker(contract.getWorkerUUID(), contract.getWorkerName());
+                        }
+                        return inserted;
                     }
-                    return inserted;
                 }
             }
             return null;
@@ -170,29 +224,29 @@ public class DatabaseManager {
     }
 
     /**
-     * Updates the status, worker, and metadata of a contract.
+     * Updates status, worker, and metadata. Fire-and-forget (no callback needed).
      */
     public void updateContract(Contract contract) {
-        async(() -> {
-            String sql = """
-                UPDATE contracts SET status=?, worker_uuid=?, worker_name=?, metadata=?
-                WHERE id=?
-            """;
+        // Snapshot mutable fields so the async thread doesn't read a later mutation
+        int id = contract.getId();
+        String status = contract.getStatus().name();
+        String workerUUID = contract.getWorkerUUID() != null ? contract.getWorkerUUID().toString() : null;
+        String workerName = contract.getWorkerName();
+        String metadata = contract.getMetadata();
+
+        asyncWrite(() -> {
+            String sql = "UPDATE contracts SET status=?, worker_uuid=?, worker_name=?, metadata=? WHERE id=?";
             try (PreparedStatement ps = connection.prepareStatement(sql)) {
-                ps.setString(1, contract.getStatus().name());
-                ps.setString(2, contract.getWorkerUUID() != null ? contract.getWorkerUUID().toString() : null);
-                ps.setString(3, contract.getWorkerName());
-                ps.setString(4, contract.getMetadata());
-                ps.setInt(5, contract.getId());
+                ps.setString(1, status);
+                ps.setString(2, workerUUID);
+                ps.setString(3, workerName);
+                ps.setString(4, metadata);
+                ps.setInt(5, id);
                 ps.executeUpdate();
             }
-            return null;
-        }, null);
+        });
     }
 
-    /**
-     * Loads all active (OPEN, ACCEPTED, PAUSED) contracts into memory on startup.
-     */
     public void loadActiveContracts(Consumer<List<Contract>> callback) {
         async(() -> {
             List<Contract> contracts = new ArrayList<>();
@@ -207,9 +261,6 @@ public class DatabaseManager {
         }, callback);
     }
 
-    /**
-     * Loads contracts by contractor UUID.
-     */
     public void loadContractsByContractor(UUID uuid, Consumer<List<Contract>> callback) {
         async(() -> {
             List<Contract> contracts = new ArrayList<>();
@@ -239,18 +290,18 @@ public class DatabaseManager {
                 reward, taxPaid, createdAt, expiresAt, metadata);
         c.setStatus(ContractStatus.valueOf(rs.getString("status")));
 
-        String workerUUID = rs.getString("worker_uuid");
-        String workerName = rs.getString("worker_name");
-        if (workerUUID != null) {
-            c.setWorker(UUID.fromString(workerUUID), workerName);
+        String workerUUIDStr = rs.getString("worker_uuid");
+        if (workerUUIDStr != null) {
+            c.setWorker(UUID.fromString(workerUUIDStr), rs.getString("worker_name"));
         }
         return c;
     }
 
     // ---- Player Stats ----
 
-    public void upsertPlayerStats(PlayerStats stats) {
-        async(() -> {
+    public void upsertPlayerStats(UUID uuid, String name, double totalSpent, double totalEarned,
+                                  int contractsPosted, int contractsCompleted) {
+        asyncWrite(() -> {
             String sql = """
                 INSERT INTO player_stats (uuid, name, total_spent, total_earned, contracts_posted, contracts_completed)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -262,23 +313,22 @@ public class DatabaseManager {
                     contracts_completed=excluded.contracts_completed
             """;
             try (PreparedStatement ps = connection.prepareStatement(sql)) {
-                ps.setString(1, stats.getUuid().toString());
-                ps.setString(2, stats.getName());
-                ps.setDouble(3, stats.getTotalSpent());
-                ps.setDouble(4, stats.getTotalEarned());
-                ps.setInt(5, stats.getContractsPosted());
-                ps.setInt(6, stats.getContractsCompleted());
+                ps.setString(1, uuid.toString());
+                ps.setString(2, name);
+                ps.setDouble(3, totalSpent);
+                ps.setDouble(4, totalEarned);
+                ps.setInt(5, contractsPosted);
+                ps.setInt(6, contractsCompleted);
                 ps.executeUpdate();
             }
-            return null;
-        }, null);
+        });
     }
 
     public void getTopBySpent(int limit, Consumer<List<PlayerStats>> callback) {
         async(() -> {
             List<PlayerStats> list = new ArrayList<>();
-            String sql = "SELECT * FROM player_stats ORDER BY total_spent DESC LIMIT ?";
-            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT * FROM player_stats ORDER BY total_spent DESC LIMIT ?")) {
                 ps.setInt(1, limit);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) list.add(parseStats(rs));
@@ -291,8 +341,8 @@ public class DatabaseManager {
     public void getTopByEarned(int limit, Consumer<List<PlayerStats>> callback) {
         async(() -> {
             List<PlayerStats> list = new ArrayList<>();
-            String sql = "SELECT * FROM player_stats ORDER BY total_earned DESC LIMIT ?";
-            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT * FROM player_stats ORDER BY total_earned DESC LIMIT ?")) {
                 ps.setInt(1, limit);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) list.add(parseStats(rs));
@@ -304,8 +354,8 @@ public class DatabaseManager {
 
     public void getPlayerStats(UUID uuid, Consumer<PlayerStats> callback) {
         async(() -> {
-            String sql = "SELECT * FROM player_stats WHERE uuid=?";
-            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT * FROM player_stats WHERE uuid=?")) {
                 ps.setString(1, uuid.toString());
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) return parseStats(rs);
@@ -328,18 +378,26 @@ public class DatabaseManager {
 
     // ---- Mail ----
 
-    public void insertMail(UUID recipientUUID, double amount, String description, Consumer<MailEntry> callback) {
+    /**
+     * Inserts a mail entry. Callback is optional.
+     */
+    public void insertMail(UUID recipientUUID, double amount, String description,
+                           Consumer<MailEntry> callback) {
+        long now = System.currentTimeMillis();
+        String uuidStr = recipientUUID.toString();
+
         async(() -> {
             String sql = "INSERT INTO mail (recipient_uuid, amount, description, created_at) VALUES (?, ?, ?, ?)";
             try (PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
-                ps.setString(1, recipientUUID.toString());
+                ps.setString(1, uuidStr);
                 ps.setDouble(2, amount);
                 ps.setString(3, description);
-                ps.setLong(4, System.currentTimeMillis());
+                ps.setLong(4, now);
                 ps.executeUpdate();
-                ResultSet keys = ps.getGeneratedKeys();
-                if (keys.next()) {
-                    return new MailEntry(keys.getInt(1), recipientUUID, amount, description, System.currentTimeMillis());
+                try (ResultSet keys = ps.getGeneratedKeys()) {
+                    if (keys.next()) {
+                        return new MailEntry(keys.getInt(1), recipientUUID, amount, description, now);
+                    }
                 }
             }
             return null;
@@ -349,8 +407,8 @@ public class DatabaseManager {
     public void getMailForPlayer(UUID uuid, Consumer<List<MailEntry>> callback) {
         async(() -> {
             List<MailEntry> entries = new ArrayList<>();
-            String sql = "SELECT * FROM mail WHERE recipient_uuid=? ORDER BY created_at ASC";
-            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT * FROM mail WHERE recipient_uuid=? ORDER BY created_at ASC")) {
                 ps.setString(1, uuid.toString());
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -368,25 +426,23 @@ public class DatabaseManager {
         }, callback);
     }
 
+    public void deleteAllMailForPlayer(UUID uuid) {
+        String uuidStr = uuid.toString();
+        asyncWrite(() -> {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "DELETE FROM mail WHERE recipient_uuid=?")) {
+                ps.setString(1, uuidStr);
+                ps.executeUpdate();
+            }
+        });
+    }
+
     public void deleteMail(int mailId) {
-        async(() -> {
-            String sql = "DELETE FROM mail WHERE id=?";
-            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+        asyncWrite(() -> {
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM mail WHERE id=?")) {
                 ps.setInt(1, mailId);
                 ps.executeUpdate();
             }
-            return null;
-        }, null);
-    }
-
-    public void deleteAllMailForPlayer(UUID uuid) {
-        async(() -> {
-            String sql = "DELETE FROM mail WHERE recipient_uuid=?";
-            try (PreparedStatement ps = connection.prepareStatement(sql)) {
-                ps.setString(1, uuid.toString());
-                ps.executeUpdate();
-            }
-            return null;
-        }, null);
+        });
     }
 }

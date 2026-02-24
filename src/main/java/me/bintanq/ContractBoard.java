@@ -10,18 +10,14 @@ import net.milkbowl.vault.economy.Economy;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.logging.Level;
-
 /**
- * ContractBoard - Main plugin entrypoint.
+ * ContractBoard — Main plugin entrypoint.
  * Initializes all managers, listeners, commands, and optional integrations.
  */
 public class ContractBoard extends JavaPlugin {
 
-    // Singleton instance
     private static ContractBoard instance;
 
-    // Core managers
     private DatabaseManager databaseManager;
     private ConfigManager configManager;
     private ContractManager contractManager;
@@ -32,35 +28,34 @@ public class ContractBoard extends JavaPlugin {
     private LeaderboardManager leaderboardManager;
     private GUIManager guiManager;
 
-    // Vault economy
     private Economy economy;
 
     @Override
     public void onEnable() {
         instance = this;
 
-        // Save default configs
+        // Save default resource files
         saveDefaultConfig();
         saveResource("messages.yml", false);
         saveResource("gui.yml", false);
 
-        // Load configs
+        // Configs first — everything else depends on them
         this.configManager = new ConfigManager(this);
 
-        // Connect database
+        // Database — synchronous connection on enable
         this.databaseManager = new DatabaseManager(this);
         if (!databaseManager.connect()) {
-            getLogger().severe("Failed to connect to SQLite database! Disabling plugin.");
+            getLogger().severe("SQLite connection failed! Disabling ContractBoard.");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
 
-        // Setup Vault Economy
+        // Vault economy (soft dependency)
         if (!setupEconomy()) {
-            getLogger().warning("Vault economy not found. Economy features will be unavailable.");
+            getLogger().warning("Vault economy not found. Economy features disabled.");
         }
 
-        // Initialize managers
+        // Managers (order matters: leaderboard & mail before contractManager)
         this.mailManager = new MailManager(this);
         this.leaderboardManager = new LeaderboardManager(this);
         this.contractManager = new ContractManager(this);
@@ -69,22 +64,22 @@ public class ContractBoard extends JavaPlugin {
         this.xpServiceManager = new XPServiceManager(this);
         this.guiManager = new GUIManager(this);
 
-        // Register listeners
+        // Listeners
         getServer().getPluginManager().registerEvents(new GUIListener(this), this);
         getServer().getPluginManager().registerEvents(new PlayerListener(this), this);
 
-        // Register commands
-        ContractCommand contractCommand = new ContractCommand(this);
-        getCommand("contract").setExecutor(contractCommand);
-        getCommand("contract").setTabCompleter(contractCommand);
+        // Commands
+        ContractCommand cmd = new ContractCommand(this);
+        getCommand("contract").setExecutor(cmd);
+        getCommand("contract").setTabCompleter(cmd);
 
-        // Register PlaceholderAPI expansion if present
+        // PlaceholderAPI expansion
         if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
             new ContractBoardExpansion(this).register();
             getLogger().info("PlaceholderAPI expansion registered.");
         }
 
-        // Start expiration task
+        // Start the expiration checker (runs async, every 30 seconds)
         contractManager.startExpirationTask();
 
         getLogger().info("ContractBoard v" + getDescription().getVersion() + " enabled.");
@@ -92,37 +87,29 @@ public class ContractBoard extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        // Cancel all boss bars
         if (bountyManager != null) bountyManager.cleanup();
-
-        // Close DB connection
         if (databaseManager != null) databaseManager.disconnect();
-
         getLogger().info("ContractBoard disabled.");
     }
 
-    /**
-     * Hooks into Vault economy.
-     */
     private boolean setupEconomy() {
         if (getServer().getPluginManager().getPlugin("Vault") == null) return false;
-        RegisteredServiceProvider<Economy> rsp = getServer().getServicesManager().getRegistration(Economy.class);
+        RegisteredServiceProvider<Economy> rsp =
+                getServer().getServicesManager().getRegistration(Economy.class);
         if (rsp == null) return false;
         economy = rsp.getProvider();
         return true;
     }
 
-    /**
-     * Reload all configurations and managers.
-     */
+    /** Reloads all config files and refreshes cached data. */
     public void reload() {
         reloadConfig();
         configManager.reload();
         leaderboardManager.reload();
-        getLogger().info("ContractBoard reloaded.");
+        getLogger().info("ContractBoard config reloaded.");
     }
 
-    // --- Getters ---
+    // ---- Getters ----
 
     public static ContractBoard getInstance() { return instance; }
     public DatabaseManager getDatabaseManager() { return databaseManager; }

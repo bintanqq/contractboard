@@ -9,8 +9,8 @@ public class PlayerStats {
 
     private final UUID uuid;
     private final String name;
-    private double totalSpent;   // As contractor
-    private double totalEarned;  // As laborer
+    private double totalSpent;
+    private double totalEarned;
     private int contractsPosted;
     private int contractsCompleted;
 

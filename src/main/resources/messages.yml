@@ -1,7 +1,5 @@
 # ============================================================
 # ContractBoard - messages.yml
-# Supports standard Minecraft color codes (&a, &b, etc.)
-# Placeholders: {player}, {amount}, {target}, {reward}, {tax}, {id}
 # ============================================================
 
 prefix: "&8[&6ContractBoard&8] &r"
@@ -15,17 +13,18 @@ economy-not-found: "&cNo economy plugin found. Contact an admin."
 feature-disabled: "&cThis contract type is currently disabled."
 
 contract:
-  created: "&aContract created! &7(ID: &e{id}&7) Tax paid: &c{tax}"
-  cancelled: "&eContract #{id} cancelled. Tax was &cnot &erefunded."
-  expired: "&7Your contract #{id} has expired. Reward sent to mail."
+  created: "&aContract created! &7(ID: &e{id}&7) Reward: &a{reward} &7| Tax paid: &c{tax}"
+  cancelled: "&eContract &7#&e{id} &ecancelled. Tax was &cnot &erefunded."
+  expired: "&7Your contract &7#&e{id} &7has expired. Reward sent to mail."
   not-found: "&cContract not found or you do not own it."
   already-accepted: "&cThis contract is already accepted by someone."
-  accepted: "&aYou accepted contract #{id}. Good luck!"
-  completed: "&aContract #{id} completed! You earned &e{reward}&a."
-  insufficient-funds: "&cYou need &e{amount}&c to post this contract."
+  accepted: "&aYou accepted contract &7#&a{id}&a. Good luck!"
+  completed: "&aContract &7#&a{id} &acompleted! You earned &e{reward}&a."
+  insufficient-funds: "&cYou need &e{amount}&c to post this contract (reward + tax)."
   reward-too-low: "&cThe minimum reward for this type is &e{min}&c."
   reward-too-high: "&cThe maximum reward for this type is &e{max}&c."
   cannot-self: "&cYou cannot post a contract targeting yourself."
+  limit-reached: "&cYou have reached your active contract limit &7(&e{limit}&7)&c. Complete or cancel existing ones first."
 
 bounty:
   target-offline: "&7Bounty target &e{target}&7 is offline. Tracking paused."
@@ -35,15 +34,15 @@ bounty:
 item-gathering:
   not-enough-items: "&cYou don't have enough &e{item}&c. Need &e{amount}&c."
   submitted: "&aItems submitted! The contractor has been notified."
-  items-ready: "&aThe worker has delivered items for contract #{id}. Use &e/contract claim {id}&a."
-  claimed: "&aYou claimed &e{amount}x {item}&a from contract #{id}."
+  items-ready: "&aThe worker delivered items for contract &7#&a{id}&a. Use &e/contract claim {id}&a to claim."
+  claimed: "&aYou claimed &e{amount}x {item}&a from contract &7#&a{id}&a."
 
 xp-services:
-  not-enough-levels: "&cYou don't have enough XP levels for this contract."
-  bottle-given: "&aYou received a Soul Bottle for contract #{id}."
-  bottle-filled: "&aYour Soul Bottle is full! Return to submit."
+  not-enough-levels: "&cYou don't have enough XP for this contract. Need ~&e{levels}&c levels."
+  bottle-given: "&aYou received a Soul Bottle for contract &7#&a{id}&a."
+  bottle-filled: "&aYour Soul Bottle is full! Open the contract GUI and click Submit."
   submitted: "&aXP transferred! You earned &e{reward}&a."
-  drain-complete: "&aXP drained and sent to contractor!"
+  drain-complete: "&aXP drained and delivered to contractor!"
 
 mail:
   header: "&6=== Your Collection Mail ==="

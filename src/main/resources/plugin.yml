@@ -24,3 +24,27 @@ permissions:
   contractboard.admin:
     description: Admin access (reload, view all mail, etc.)
     default: op
+  # --- Contract Limit Permissions ---
+  # These override the default max set in config.yml.
+  # The highest permission node the player has will be used.
+  contractboard.max.1:
+    description: Allows posting up to 1 active contract.
+    default: false
+  contractboard.max.2:
+    description: Allows posting up to 2 active contracts.
+    default: false
+  contractboard.max.3:
+    description: Allows posting up to 3 active contracts.
+    default: false
+  contractboard.max.5:
+    description: Allows posting up to 5 active contracts.
+    default: false
+  contractboard.max.10:
+    description: Allows posting up to 10 active contracts.
+    default: false
+  contractboard.max.25:
+    description: Allows posting up to 25 active contracts.
+    default: false
+  contractboard.max.unlimited:
+    description: No limit on active contracts.
+    default: op

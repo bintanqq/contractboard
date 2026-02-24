@@ -4,11 +4,8 @@ import java.util.UUID;
 
 /**
  * Base representation of a Contract.
- * All contract types extend or embed this data.
  */
 public class Contract {
-
-    // ---- Enums ----
 
     public enum ContractType {
         BOUNTY_HUNT,
@@ -25,8 +22,6 @@ public class Contract {
         EXPIRED     // Passed expiration time
     }
 
-    // ---- Fields ----
-
     private final int id;
     private final ContractType type;
     private final UUID contractorUUID;
@@ -34,12 +29,18 @@ public class Contract {
     private UUID workerUUID;
     private String workerName;
     private ContractStatus status;
-    private final double reward;       // Net reward (after tax deducted at creation)
-    private final double taxPaid;
-    private final long createdAt;      // Unix millis
-    private final long expiresAt;      // Unix millis
 
-    // Type-specific metadata stored as serialized JSON/string in DB
+    /**
+     * The reward the WORKER receives on completion.
+     * Tax is separate and is paid by the contractor on top.
+     */
+    private final double reward;
+    private final double taxPaid;
+
+    private final long createdAt;
+    private final long expiresAt;
+
+    // Pipe-delimited metadata string, format varies by type (see MetadataUtil)
     private String metadata;
 
     public Contract(int id, ContractType type, UUID contractorUUID, String contractorName,
@@ -56,7 +57,7 @@ public class Contract {
         this.status = ContractStatus.OPEN;
     }
 
-    // ---- Getters & Setters ----
+    // ---- Getters ----
 
     public int getId() { return id; }
     public ContractType getType() { return type; }
@@ -71,6 +72,8 @@ public class Contract {
     public long getExpiresAt() { return expiresAt; }
     public String getMetadata() { return metadata; }
 
+    // ---- Setters ----
+
     public void setWorker(UUID uuid, String name) {
         this.workerUUID = uuid;
         this.workerName = name;
@@ -79,11 +82,15 @@ public class Contract {
     public void setStatus(ContractStatus status) { this.status = status; }
     public void setMetadata(String metadata) { this.metadata = metadata; }
 
+    // ---- Helpers ----
+
     public boolean isExpired() {
         return System.currentTimeMillis() > expiresAt;
     }
 
     public boolean isActive() {
-        return status == ContractStatus.OPEN || status == ContractStatus.ACCEPTED || status == ContractStatus.PAUSED;
+        return status == ContractStatus.OPEN
+                || status == ContractStatus.ACCEPTED
+                || status == ContractStatus.PAUSED;
     }
 }

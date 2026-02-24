@@ -6,18 +6,19 @@ import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
 
 import java.io.File;
+import java.util.List;
 
 /**
  * Centralizes access to all plugin configurations.
- * Provides typed getters so the rest of the code never touches raw config paths.
+ * All getters are typed — the rest of the code never touches raw config paths.
  */
 public class ConfigManager {
 
     private final ContractBoard plugin;
 
-    // Config files
     private FileConfiguration config;
     private FileConfiguration messages;
     private FileConfiguration gui;
@@ -27,9 +28,7 @@ public class ConfigManager {
         load();
     }
 
-    public void reload() {
-        load();
-    }
+    public void reload() { load(); }
 
     private void load() {
         plugin.reloadConfig();
@@ -60,15 +59,15 @@ public class ConfigManager {
         };
     }
 
-    // ---- Expiration (hours -> millis) ----
+    // ---- Expiration: MINUTES → milliseconds ----
 
     public long getExpirationMillis(ContractType type) {
-        long hours = switch (type) {
-            case BOUNTY_HUNT -> config.getLong("expiration.bounty-hunt", 72);
-            case ITEM_GATHERING -> config.getLong("expiration.item-gathering", 48);
-            case XP_SERVICE -> config.getLong("expiration.xp-services", 24);
+        long minutes = switch (type) {
+            case BOUNTY_HUNT -> config.getLong("expiration.bounty-hunt", 4320);
+            case ITEM_GATHERING -> config.getLong("expiration.item-gathering", 2880);
+            case XP_SERVICE -> config.getLong("expiration.xp-services", 1440);
         };
-        return hours * 3600_000L;
+        return minutes * 60_000L;
     }
 
     // ---- Price Limits ----
@@ -89,7 +88,45 @@ public class ConfigManager {
         };
     }
 
-    // ---- Bounty Settings ----
+    // ---- Contract Limits ----
+
+    /**
+     * Returns the maximum number of active contracts a player may have simultaneously.
+     *
+     * Resolution order:
+     * 1. contractboard.max.unlimited → no limit (Integer.MAX_VALUE)
+     * 2. contractboard.max.<n>       → highest matching node wins
+     * 3. config default-max          → fallback
+     */
+    public int getContractLimit(Player player) {
+        if (player.hasPermission("contractboard.max.unlimited")) {
+            return Integer.MAX_VALUE;
+        }
+
+        // Scan permission nodes contractboard.max.1 .. contractboard.max.999
+        // We scan the attached permissions rather than a hard-coded list so
+        // server owners can define any value in their permission manager.
+        int highest = -1;
+        for (org.bukkit.permissions.PermissionAttachmentInfo pai : player.getEffectivePermissions()) {
+            String perm = pai.getPermission().toLowerCase();
+            if (!pai.getValue()) continue; // negated permission, skip
+            if (!perm.startsWith("contractboard.max.")) continue;
+            String suffix = perm.substring("contractboard.max.".length());
+            try {
+                int val = Integer.parseInt(suffix);
+                if (val > highest) highest = val;
+            } catch (NumberFormatException ignored) {
+                // e.g. "contractboard.max.unlimited" already handled above
+            }
+        }
+
+        if (highest >= 0) return highest;
+
+        // Fallback to config
+        return config.getInt("contract-limits.default-max", 3);
+    }
+
+    // ---- Bounty ----
 
     public double getAnonymousExtraCost() { return config.getDouble("bounty.anonymous-extra-cost", 50.0); }
     public int getBossBarUpdateInterval() { return config.getInt("bounty.bossbar-update-interval", 5); }
@@ -97,35 +134,30 @@ public class ConfigManager {
     public BarColor getBossBarColor() {
         try {
             return BarColor.valueOf(config.getString("bounty.bossbar-color", "YELLOW").toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return BarColor.YELLOW;
-        }
+        } catch (IllegalArgumentException e) { return BarColor.YELLOW; }
     }
 
     public BarStyle getBossBarStyle() {
         try {
             return BarStyle.valueOf(config.getString("bounty.bossbar-style", "SOLID").toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return BarStyle.SOLID;
-        }
+        } catch (IllegalArgumentException e) { return BarStyle.SOLID; }
     }
 
     // ---- XP Service ----
 
     public String getSoulBottleItem() { return config.getString("xp-services.soul-bottle-item", "GLASS_BOTTLE"); }
     public String getSoulBottleName() { return config.getString("xp-services.soul-bottle-name", "&b&lSoul Bottle"); }
-    public java.util.List<String> getSoulBottleLore() { return config.getStringList("xp-services.soul-bottle-lore"); }
+    public List<String> getSoulBottleLore() { return config.getStringList("xp-services.soul-bottle-lore"); }
 
     // ---- Database ----
 
     public String getDatabaseFile() { return config.getString("database.file", "contractboard.db"); }
 
-    // ---- Message Helpers ----
+    // ---- Messages ----
 
     public String getMessage(String path) {
         String msg = messages.getString(path, "&cMissing message: " + path);
         String prefix = messages.getString("prefix", "");
-        // Prefix is only prepended to paths NOT starting with prefix itself
         return colorize(prefix + msg);
     }
 
@@ -133,11 +165,11 @@ public class ConfigManager {
         return colorize(messages.getString(path, "&cMissing: " + path));
     }
 
-    // ---- GUI Config ----
+    // ---- GUI ----
 
     public FileConfiguration getGuiConfig() { return gui; }
 
-    // ---- Utilities ----
+    // ---- Utility ----
 
     public String colorize(String s) {
         return org.bukkit.ChatColor.translateAlternateColorCodes('&', s);
