@@ -1,0 +1,56 @@
+# ============================================================
+# ContractBoard - config.yml
+# ============================================================
+
+# --- Feature Toggles ---
+features:
+  bounty-hunt: true
+  item-gathering: true
+  xp-services: true
+
+# --- Tax Rates (percentage taken at creation time, non-refundable) ---
+tax:
+  bounty-hunt: 5.0      # 5% of reward
+  item-gathering: 3.0   # 3% of reward
+  xp-services: 4.0      # 4% of reward
+
+# --- Contract Expiration (in hours) ---
+expiration:
+  bounty-hunt: 72
+  item-gathering: 48
+  xp-services: 24
+
+# --- Price Limits ---
+price-limits:
+  bounty-hunt:
+    min: 100.0
+    max: 1000000.0
+  item-gathering:
+    min: 10.0
+    max: 500000.0
+  xp-services:
+    min: 10.0
+    max: 200000.0
+
+# --- Bounty Hunt Settings ---
+bounty:
+  anonymous-extra-cost: 50.0      # Extra flat fee to post anonymously
+  bossbar-update-interval: 5      # Seconds between BossBar location updates
+  bossbar-color: YELLOW           # BossBar color: PINK, BLUE, RED, GREEN, YELLOW, PURPLE, WHITE
+  bossbar-style: SOLID            # BossBar style: SOLID, SEGMENTED_6, SEGMENTED_10, SEGMENTED_12, SEGMENTED_20
+
+# --- XP Service Settings ---
+xp-services:
+  soul-bottle-item: GLASS_BOTTLE
+  soul-bottle-name: "&b&lSoul Bottle"
+  soul-bottle-lore:
+    - "&7Fill with &bXP&7 by killing mobs."
+    - "&7Contract: &e{contract_id}"
+    - "&7Progress: &a{current}&7/&a{required} &7points"
+
+# --- BossBar update frequency for item tracking ---
+bossbar-update-seconds: 5
+
+# --- Database ---
+database:
+  file: "contractboard.db"

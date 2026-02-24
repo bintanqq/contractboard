@@ -1,0 +1,26 @@
+name: ContractBoard
+version: '1.0.0'
+main: me.bintanq.ContractBoard
+api-version: '1.21'
+authors: [ bintanq ]
+description: A professional contract board plugin.
+
+softdepend:
+  - Vault
+  - PlaceholderAPI
+
+commands:
+  contract:
+    description: Main command for ContractBoard.
+    usage: /contract <open|reload|mail|top>
+    aliases:
+      - cb
+      - board
+
+permissions:
+  contractboard.use:
+    description: Allows access to the contract board.
+    default: true
+  contractboard.admin:
+    description: Admin access (reload, view all mail, etc.)
+    default: op

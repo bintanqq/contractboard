@@ -1,0 +1,214 @@
+# ============================================================
+# ContractBoard - gui.yml
+# Fully customizable GUI layout
+# Supports color codes, item types, custom names/lore, slots
+# ============================================================
+
+# --- Main Board GUI ---
+main-board:
+  title: "&8Contract Board"
+  rows: 6
+  filler:
+    enabled: true
+    item: GRAY_STAINED_GLASS_PANE
+    name: " "
+  buttons:
+    bounty-hunt:
+      slot: 20
+      item: PLAYER_HEAD
+      name: "&c&lBounty Hunt"
+      lore:
+        - "&7Place a price on a player's head."
+        - "&7Min reward: &e{min}"
+        - ""
+        - "&eClick to browse bounties."
+    item-gathering:
+      slot: 22
+      item: CHEST
+      name: "&a&lItem Gathering"
+      lore:
+        - "&7Request items from other players."
+        - "&7Reward held in escrow."
+        - ""
+        - "&eClick to browse contracts."
+    xp-services:
+      slot: 24
+      item: EXPERIENCE_BOTTLE
+      name: "&b&lXP Services"
+      lore:
+        - "&7Buy or sell XP between players."
+        - ""
+        - "&eClick to browse contracts."
+    leaderboard:
+      slot: 49
+      item: GOLD_BLOCK
+      name: "&6&lLeaderboards"
+      lore:
+        - "&7View top contractors and laborers."
+        - ""
+        - "&eClick to open."
+    mail:
+      slot: 45
+      item: ENDER_CHEST
+      name: "&d&lCollection Mail"
+      lore:
+        - "&7Claim expired or completed rewards."
+        - ""
+        - "&eClick to open."
+    close:
+      slot: 53
+      item: BARRIER
+      name: "&c&lClose"
+      lore:
+        - "&7Close this menu."
+
+# --- Contract List GUI (shared layout for all types) ---
+contract-list:
+  title: "&8{type} Contracts"
+  rows: 6
+  filler:
+    enabled: true
+    item: GRAY_STAINED_GLASS_PANE
+    name: " "
+  # Slots 0-44 are used for contract entries
+  navigation:
+    prev-page:
+      slot: 45
+      item: ARROW
+      name: "&ePrevious Page"
+      lore: []
+    next-page:
+      slot: 53
+      item: ARROW
+      name: "&eNext Page"
+      lore: []
+    back:
+      slot: 49
+      item: BARRIER
+      name: "&cBack"
+      lore:
+        - "&7Return to main board."
+    new-contract:
+      slot: 47
+      item: WRITABLE_BOOK
+      name: "&a&lPost New Contract"
+      lore:
+        - "&eClick to create a new contract."
+
+# --- Contract Detail / Confirm GUI ---
+contract-detail:
+  title: "&8Contract Details"
+  rows: 4
+  filler:
+    enabled: true
+    item: GRAY_STAINED_GLASS_PANE
+    name: " "
+  buttons:
+    accept:
+      slot: 20
+      item: LIME_CONCRETE
+      name: "&a&lAccept Contract"
+      lore:
+        - "&7Accept and begin working."
+        - ""
+        - "&aClick to confirm."
+    cancel:
+      slot: 24
+      item: RED_CONCRETE
+      name: "&c&lCancel Contract"
+      lore:
+        - "&7Cancel this contract."
+        - "&cTax is non-refundable."
+        - ""
+        - "&cClick to cancel."
+    submit:
+      slot: 22
+      item: EMERALD
+      name: "&b&lSubmit Work"
+      lore:
+        - "&7Submit your completed work."
+        - ""
+        - "&eClick to submit."
+    back:
+      slot: 31
+      item: BARRIER
+      name: "&cBack"
+      lore:
+        - "&7Return to contract list."
+
+# --- Leaderboard GUI ---
+leaderboard:
+  title: "&6Leaderboards"
+  rows: 6
+  filler:
+    enabled: true
+    item: YELLOW_STAINED_GLASS_PANE
+    name: " "
+  buttons:
+    top-contractors:
+      slot: 20
+      item: DIAMOND
+      name: "&b&lTop Contractors"
+      lore:
+        - "&7Players who spent the most."
+    top-laborers:
+      slot: 24
+      item: GOLD_INGOT
+      name: "&6&lTop Laborers"
+      lore:
+        - "&7Players who earned the most."
+    back:
+      slot: 49
+      item: BARRIER
+      name: "&cBack"
+      lore:
+        - "&7Return to main board."
+
+# --- Mail GUI ---
+mail-gui:
+  title: "&dCollection Mail"
+  rows: 6
+  filler:
+    enabled: true
+    item: PURPLE_STAINED_GLASS_PANE
+    name: " "
+  buttons:
+    collect-all:
+      slot: 49
+      item: HOPPER
+      name: "&a&lCollect All"
+      lore:
+        - "&7Collect all pending rewards."
+    back:
+      slot: 45
+      item: BARRIER
+      name: "&cBack"
+      lore:
+        - "&7Return to main board."
+
+# --- Contract creation item (displayed in detail view) ---
+contract-item-display:
+  bounty:
+    item: PLAYER_HEAD
+    name: "&c{target}'s Head"
+    lore:
+      - "&7Contractor: &e{contractor}"
+      - "&7Reward: &a{reward}"
+      - "&7Anonymous: &e{anonymous}"
+      - "&7Expires: &7{expires}"
+  item-gathering:
+    item: "{item_type}"
+    name: "&a{amount}x {item_name}"
+    lore:
+      - "&7Contractor: &e{contractor}"
+      - "&7Reward: &a{reward}"
+      - "&7Status: &e{status}"
+      - "&7Expires: &7{expires}"
+  xp-services:
+    item: EXPERIENCE_BOTTLE
+    name: "&b{xp_amount} XP Points"
+    lore:
+      - "&7Contractor: &e{contractor}"
+      - "&7Reward: &a{reward}"
+      - "&7Mode: &e{mode}"
+      - "&7Expires: &7{expires}"
