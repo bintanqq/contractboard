@@ -5,6 +5,7 @@ import me.bintanq.model.Contract;
 import me.bintanq.model.Contract.ContractStatus;
 import me.bintanq.util.MetadataUtil;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.boss.BossBar;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
@@ -14,17 +15,10 @@ import java.util.*;
 /**
  * Manages Bounty Hunt contracts.
  *
- * Fix applied:
- *   The original handleKill() used Optional<Map.Entry<...>> whose type inference
- *   broke when assigning entry.getKey() / entry.getValue() because the compiler
- *   couldn't resolve the wildcard on the nested generic. Fixed by calling
- *   .orElse(null) and explicitly typing the local variables as UUID and Contract.
- *
- * Performance notes:
- *   - BossBar update tasks run on the MAIN thread (required for Bukkit API) but
- *     are lightweight: one UUID map lookup + one player location read per hunter.
- *   - We store one task per hunter rather than a single global scanner to avoid
- *     iterating all hunters every tick.
+ * NEW FEATURE: Test Mode
+ * - Enable with /contract bountytest
+ * - Allows killing ANY player to complete bounty (for testing with 2 clients)
+ * - Shows special message to indicate test mode is active
  */
 public class BountyManager {
 
@@ -39,36 +33,32 @@ public class BountyManager {
     // hunterUUID → repeating BossBar update task
     private final Map<UUID, BukkitTask> trackingTasks = new HashMap<>();
 
+    // NEW: Test mode - allows killing any player to complete bounty
+    private final Set<UUID> testModePlayers = new HashSet<>();
+
     public BountyManager(ContractBoard plugin) {
         this.plugin = plugin;
     }
 
     // ---- Bounty Posting ----
 
-    /**
-     * Posts a new bounty contract.
-     * Metadata: "targetUUID|targetName|anonymous"
-     *
-     * Anonymous extra cost is an additional flat fee withdrawn from the contractor
-     * BEFORE the normal reward+tax is processed by ContractManager.
-     */
     public void postBounty(Player contractor, String targetName, double reward, boolean anonymous) {
         Player target = Bukkit.getPlayerExact(targetName);
         if (target == null) {
-            contractor.sendMessage(plugin.getConfigManager().getMessage("contract.not-found"));
+            contractor.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.not-found")));
             return;
         }
         if (target.getUniqueId().equals(contractor.getUniqueId())) {
-            contractor.sendMessage(plugin.getConfigManager().getMessage("contract.cannot-self"));
+            contractor.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.cannot-self")));
             return;
         }
 
-        // Anonymous fee: extra cost on top of the standard reward+tax
+        // Anonymous fee
         if (anonymous) {
             double extraCost = plugin.getConfigManager().getAnonymousExtraCost();
             if (!plugin.hasEconomy() || !plugin.getEconomy().has(contractor, extraCost)) {
-                contractor.sendMessage(plugin.getConfigManager().getMessage("contract.insufficient-funds")
-                        .replace("{amount}", String.format("%.2f", extraCost)));
+                contractor.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.insufficient-funds")
+                        .replace("{amount}", String.format("%.2f", extraCost))));
                 return;
             }
             plugin.getEconomy().withdrawPlayer(contractor, extraCost);
@@ -82,23 +72,20 @@ public class BountyManager {
                 contract -> {
                     // Notify target
                     String who = anonymous
-                            ? plugin.getConfigManager().colorize("&ean anonymous contractor")
-                            : plugin.getConfigManager().colorize("&e" + contractor.getName());
-                    target.sendMessage(plugin.getConfigManager().colorize(
+                            ? plugin.getConfigManager().getMessage("bounty.anonymous-reveal")
+                            : stripColor(plugin.getConfigManager().colorize("&e" + contractor.getName()));
+
+                    String notification = stripColor(plugin.getConfigManager().colorize(
                             "&cA bounty of &6" + String.format("%.2f", reward) +
                                     "&c has been placed on your head by " + who + "&c!"));
+                    target.sendMessage(notification);
                 }
         );
     }
 
     // ---- Hunter Tracking ----
 
-    /**
-     * Starts the BossBar tracking loop for a hunter.
-     * Called when a hunter accepts a bounty contract.
-     */
     public void startTracking(Player hunter, Contract contract) {
-        // Remove any stale tracking for this hunter first
         stopTracking(hunter.getUniqueId());
 
         activeBounties.put(hunter.getUniqueId(), contract);
@@ -111,9 +98,16 @@ public class BountyManager {
         bar.addPlayer(hunter);
         bossBars.put(hunter.getUniqueId(), bar);
 
+        // NEW: Check if test mode is enabled
+        if (testModePlayers.contains(hunter.getUniqueId())) {
+            hunter.sendMessage(ChatColor.GREEN + "━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            hunter.sendMessage(stripColor(plugin.getConfigManager().getMessage("bounty.test-mode-enabled")));
+            hunter.sendMessage(stripColor(plugin.getConfigManager().getMessage("bounty.test-mode-info")));
+            hunter.sendMessage(ChatColor.GREEN + "━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        }
+
         long intervalTicks = (long) plugin.getConfigManager().getBossBarUpdateInterval() * 20L;
 
-        // Run on main thread — BossBar API and Player.getLocation() are not thread-safe
         BukkitTask task = Bukkit.getScheduler().runTaskTimer(
                 plugin, () -> updateBossBar(hunter.getUniqueId(), contract), 0L, intervalTicks);
         trackingTasks.put(hunter.getUniqueId(), task);
@@ -124,7 +118,7 @@ public class BountyManager {
         if (bar == null) return;
 
         Player hunter = Bukkit.getPlayer(hunterUUID);
-        if (hunter == null) return; // Hunter offline; task will be cleaned up on quit/join logic
+        if (hunter == null) return;
 
         String targetName = MetadataUtil.getBountyTargetName(contract.getMetadata());
         UUID targetUUID;
@@ -137,25 +131,26 @@ public class BountyManager {
 
         Player target = Bukkit.getPlayer(targetUUID);
 
+        // NEW: Test mode indicator
+        String testIndicator = testModePlayers.contains(hunterUUID) ? " &a[TEST MODE]" : "";
+
         if (target == null || !target.isOnline()) {
-            // Target offline → pause
             if (contract.getStatus() == ContractStatus.ACCEPTED) {
                 contract.setStatus(ContractStatus.PAUSED);
                 plugin.getDatabaseManager().updateContract(contract);
-                hunter.sendMessage(plugin.getConfigManager().getMessage("bounty.target-offline")
-                        .replace("{target}", targetName));
+                hunter.sendMessage(stripColor(plugin.getConfigManager().getMessage("bounty.target-offline")
+                        .replace("{target}", targetName)));
             }
             bar.setTitle(plugin.getConfigManager().colorize(
-                    "&cTarget: &e" + targetName + " &7| &cOFFLINE — Tracking Paused"));
+                    "&cTarget: &e" + targetName + " &7| &cOFFLINE — Tracking Paused" + testIndicator));
             return;
         }
 
-        // Target online → resume if was paused
         if (contract.getStatus() == ContractStatus.PAUSED) {
             contract.setStatus(ContractStatus.ACCEPTED);
             plugin.getDatabaseManager().updateContract(contract);
-            hunter.sendMessage(plugin.getConfigManager().colorize(
-                    "&aTarget &e" + targetName + " &ais back online. Tracking resumed!"));
+            hunter.sendMessage(stripColor(plugin.getConfigManager().colorize(
+                    "&aTarget &e" + targetName + " &ais back online. Tracking resumed!")));
         }
 
         bar.setTitle(plugin.getConfigManager().colorize(
@@ -163,13 +158,11 @@ public class BountyManager {
                         " &7| &eWorld: &f" + target.getWorld().getName() +
                         " &7| &eXYZ: &f" + target.getLocation().getBlockX() +
                         " &7/ &f" + target.getLocation().getBlockY() +
-                        " &7/ &f" + target.getLocation().getBlockZ()
+                        " &7/ &f" + target.getLocation().getBlockZ() +
+                        testIndicator
         ));
     }
 
-    /**
-     * Stops and cleans up all tracking resources for a hunter.
-     */
     public void stopTracking(UUID hunterUUID) {
         BukkitTask task = trackingTasks.remove(hunterUUID);
         if (task != null) task.cancel();
@@ -182,47 +175,75 @@ public class BountyManager {
 
     // ---- Kill Detection ----
 
-    /**
-     * Called from PlayerListener on EntityDeathEvent when a player is killed.
-     *
-     * Fix: the original code declared Optional<Map.Entry<UUID, Contract>> entry
-     * and then tried to call entry.getKey() / entry.getValue() — this fails
-     * because Optional does not have getKey()/getValue(). You must call
-     * entry.get() first to obtain the Map.Entry, or use ifPresent().
-     * We use a null-check pattern here which is clearer and avoids the issue.
-     */
     public void handleKill(Player killer, Player victim) {
         UUID killerUUID = killer.getUniqueId();
         UUID victimUUID = victim.getUniqueId();
 
-        // Check if this killer is actively tracking a bounty on this victim
         Contract contract = activeBounties.get(killerUUID);
         if (contract == null) return;
         if (contract.getStatus() != ContractStatus.ACCEPTED
                 && contract.getStatus() != ContractStatus.PAUSED) return;
 
-        // Verify this contract's target is indeed the victim
         String targetUUIDStr = MetadataUtil.getBountyTargetUUID(contract.getMetadata());
-        if (!victimUUID.toString().equals(targetUUIDStr)) return;
+        String targetName = MetadataUtil.getBountyTargetName(contract.getMetadata());
+
+        // NEW: Test mode - accept ANY kill
+        boolean isTestMode = testModePlayers.contains(killerUUID);
+        boolean isCorrectTarget = victimUUID.toString().equals(targetUUIDStr);
+
+        if (!isCorrectTarget && !isTestMode) {
+            return; // Wrong target and not in test mode
+        }
 
         // Complete the bounty
         stopTracking(killerUUID);
         plugin.getContractManager().completeContract(contract, killer);
 
-        killer.sendMessage(plugin.getConfigManager().getMessage("bounty.target-killed")
-                .replace("{target}", victim.getName())
-                .replace("{reward}", String.format("%.2f", contract.getReward())));
+        // NEW: Different message for test mode
+        if (isTestMode && !isCorrectTarget) {
+            killer.sendMessage(stripColor(plugin.getConfigManager().getMessage("bounty.test-mode-completed")
+                    .replace("{victim}", victim.getName())
+                    .replace("{target}", targetName)
+                    .replace("{reward}", String.format("%.2f", contract.getReward()))));
+        } else {
+            killer.sendMessage(stripColor(plugin.getConfigManager().getMessage("bounty.target-killed")
+                    .replace("{target}", victim.getName())
+                    .replace("{reward}", String.format("%.2f", contract.getReward()))));
+        }
+    }
+
+    // ---- Test Mode Management ----
+
+    /**
+     * Toggles test mode for a player
+     * In test mode, ANY player kill will complete the bounty (for testing with 2 clients)
+     */
+    public void toggleTestMode(Player player) {
+        if (testModePlayers.contains(player.getUniqueId())) {
+            testModePlayers.remove(player.getUniqueId());
+            player.sendMessage(ChatColor.RED + "Bounty test mode disabled.");
+        } else {
+            testModePlayers.add(player.getUniqueId());
+            player.sendMessage(ChatColor.GREEN + "━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            player.sendMessage(stripColor(plugin.getConfigManager().getMessage("bounty.test-mode-enabled")));
+            player.sendMessage(stripColor(plugin.getConfigManager().getMessage("bounty.test-mode-info")));
+            player.sendMessage(ChatColor.GREEN + "━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        }
+    }
+
+    public boolean isTestMode(UUID playerUUID) {
+        return testModePlayers.contains(playerUUID);
     }
 
     // ---- Cleanup ----
 
-    /** Called on plugin disable. */
     public void cleanup() {
         trackingTasks.values().forEach(BukkitTask::cancel);
         bossBars.values().forEach(BossBar::removeAll);
         trackingTasks.clear();
         bossBars.clear();
         activeBounties.clear();
+        testModePlayers.clear();
     }
 
     // ---- Getters ----
@@ -233,5 +254,9 @@ public class BountyManager {
 
     public Contract getBountyForHunter(UUID hunterUUID) {
         return activeBounties.get(hunterUUID);
+    }
+
+    private String stripColor(String message) {
+        return ChatColor.stripColor(ChatColor.translateAlternateColorCodes('&', message));
     }
 }

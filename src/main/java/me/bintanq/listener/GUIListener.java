@@ -14,8 +14,10 @@ import org.bukkit.inventory.InventoryHolder;
 
 /**
  * Central GUI listener using a State-pattern dispatch.
- * ALL inventory interactions inside plugin GUIs are cancelled by default
- * to prevent item duplication/theft, then routed to the correct handler.
+ *
+ * FIXED BUGS:
+ * - Contractor can't submit their own contract
+ * - Added ongoing contracts view for workers
  */
 public class GUIListener implements Listener {
 
@@ -34,23 +36,39 @@ public class GUIListener implements Listener {
 
     // ---- Block item movement in all plugin GUIs ----
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
-        if (!isCBInventory(event.getInventory())) return;
 
-        // Prevent ALL interactions (shift-click, hotbar moves, etc.)
+        // Check if this is our inventory
+        Inventory topInv = event.getView().getTopInventory();
+        if (!isCBInventory(topInv)) return;
+
+        // CRITICAL: Cancel event to prevent item duplication/theft
         event.setCancelled(true);
 
+        // Only process clicks in the TOP inventory (our GUI)
         if (event.getClickedInventory() == null) return;
-        if (!isCBInventory(event.getClickedInventory())) return; // clicked own inventory
+        if (!isCBInventory(event.getClickedInventory())) return;
+
+        // Prevent any item from being taken out
+        if (event.getClick().isShiftClick()) return;
+        if (event.getHotbarButton() >= 0) return;
 
         int slot = event.getSlot();
         GUIState state = plugin.getGUIManager().getState(player.getUniqueId());
 
+        // If state is NONE, try to recover it from inventory holder
+        if (state == GUIState.NONE) {
+            state = recoverState(topInv);
+            if (state != GUIState.NONE) {
+                plugin.getGUIManager().setState(player.getUniqueId(), state);
+            }
+        }
+
         switch (state) {
             case MAIN_BOARD -> handleMainBoard(player, slot);
-            case CONTRACT_LIST -> handleContractList(player, slot, event.getInventory());
+            case CONTRACT_LIST -> handleContractList(player, slot, topInv);
             case CONTRACT_DETAIL -> handleContractDetail(player, slot);
             case LEADERBOARD -> handleLeaderboard(player, slot);
             case MAIL -> handleMail(player, slot);
@@ -58,7 +76,25 @@ public class GUIListener implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    /**
+     * Tries to recover the GUI state from inventory holder when state is lost
+     */
+    private GUIState recoverState(Inventory inv) {
+        if (inv == null || !(inv.getHolder() instanceof CBInventoryHolder holder)) {
+            return GUIState.NONE;
+        }
+
+        String id = holder.getId();
+        if (id.equals("MAIN_BOARD")) return GUIState.MAIN_BOARD;
+        if (id.equals("LEADERBOARD")) return GUIState.LEADERBOARD;
+        if (id.equals("MAIL")) return GUIState.MAIL;
+        if (id.startsWith("CONTRACT_LIST_")) return GUIState.CONTRACT_LIST;
+        if (id.startsWith("CONTRACT_DETAIL_")) return GUIState.CONTRACT_DETAIL;
+
+        return GUIState.NONE;
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onInventoryDrag(InventoryDragEvent event) {
         if (!isCBInventory(event.getInventory())) return;
         event.setCancelled(true);
@@ -68,19 +104,31 @@ public class GUIListener implements Listener {
     public void onInventoryClose(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
         if (!isCBInventory(event.getInventory())) return;
-        plugin.getGUIManager().clearState(player.getUniqueId());
+
+        // Don't clear state immediately - let it persist for a moment
+        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (player.getOpenInventory().getTopInventory().getHolder() instanceof CBInventoryHolder) {
+                return;
+            }
+            plugin.getGUIManager().clearState(player.getUniqueId());
+            viewingContract.remove(player.getUniqueId());
+            viewingType.remove(player.getUniqueId());
+            currentPage.remove(player.getUniqueId());
+        }, 2L);
     }
 
     // ---- State Handlers ----
 
     private void handleMainBoard(Player player, int slot) {
-        // Retrieve slots from gui.yml for robustness
+        // Retrieve slots from gui.yml
         int bountySlot = getButtonSlot("main-board", "buttons.bounty-hunt", 20);
         int itemSlot = getButtonSlot("main-board", "buttons.item-gathering", 22);
         int xpSlot = getButtonSlot("main-board", "buttons.xp-services", 24);
         int lbSlot = getButtonSlot("main-board", "buttons.leaderboard", 49);
         int mailSlot = getButtonSlot("main-board", "buttons.mail", 45);
         int closeSlot = getButtonSlot("main-board", "buttons.close", 53);
+        int statsSlot = getButtonSlot("main-board", "buttons.player-stats", 4); // NEW: Player stats button
+        int myContractsSlot = getButtonSlot("main-board", "buttons.my-contracts", 48); // NEW: My contracts button
 
         if (slot == bountySlot) {
             if (!plugin.getConfigManager().isBountyEnabled()) {
@@ -104,6 +152,12 @@ public class GUIListener implements Listener {
             plugin.getGUIManager().openLeaderboard(player);
         } else if (slot == mailSlot) {
             plugin.getGUIManager().openMailGUI(player);
+        } else if (slot == statsSlot) {
+            // NEW: Open player stats GUI
+            plugin.getGUIManager().openPlayerStats(player);
+        } else if (slot == myContractsSlot) {
+            // NEW: Open my contracts GUI (ongoing contracts)
+            plugin.getGUIManager().openMyContracts(player);
         } else if (slot == closeSlot) {
             player.closeInventory();
         }
@@ -134,8 +188,7 @@ public class GUIListener implements Listener {
             plugin.getGUIManager().openContractList(player, type, page + 1);
         } else if (slot == newSlot) {
             player.closeInventory();
-            player.sendMessage(plugin.getConfigManager().colorize(
-                    "&eUse &a/contract post &eto create a contract. See /contract help for syntax."));
+            player.sendMessage(plugin.getConfigManager().getMessage("contract.use-command"));
         } else if (slot < 45) {
             // Clicked a contract entry
             java.util.List<Contract> contracts = plugin.getContractManager().getOpenContracts(type);
@@ -155,25 +208,51 @@ public class GUIListener implements Listener {
         int backSlot = getButtonSlot("contract-detail", "buttons.back", 31);
 
         Integer contractId = viewingContract.get(player.getUniqueId());
-        if (contractId == null) { plugin.getGUIManager().openMainBoard(player); return; }
+        if (contractId == null) {
+            plugin.getGUIManager().openMainBoard(player);
+            return;
+        }
 
         Contract contract = plugin.getContractManager().getContract(contractId).orElse(null);
-        if (contract == null) { plugin.getGUIManager().openMainBoard(player); return; }
+        if (contract == null) {
+            plugin.getGUIManager().openMainBoard(player);
+            return;
+        }
+
+        boolean isContractor = player.getUniqueId().equals(contract.getContractorUUID());
+        boolean isWorker = player.getUniqueId().equals(contract.getWorkerUUID());
 
         if (slot == backSlot) {
             Contract.ContractType type = viewingType.getOrDefault(player.getUniqueId(), Contract.ContractType.BOUNTY_HUNT);
             plugin.getGUIManager().openContractList(player, type, currentPage.getOrDefault(player.getUniqueId(), 0));
         } else if (slot == acceptSlot) {
+            // FIX BUG #1: Contractor cannot accept own contract
+            if (isContractor) {
+                player.sendMessage(plugin.getConfigManager().getMessage("contract.cannot-self"));
+                return;
+            }
+
             plugin.getContractManager().acceptContract(player, contractId);
-            // Start type-specific tracking
             if (contract.getStatus() == Contract.ContractStatus.ACCEPTED) {
                 handlePostAccept(player, contract);
             }
             player.closeInventory();
         } else if (slot == cancelSlot) {
+            // Only contractor can cancel
+            if (!isContractor) {
+                player.sendMessage(plugin.getConfigManager().getMessage("contract.not-yours"));
+                return;
+            }
+
             plugin.getContractManager().cancelContract(player, contractId);
             player.closeInventory();
         } else if (slot == submitSlot) {
+            // FIX BUG #1: Only worker can submit, NOT contractor
+            if (!isWorker) {
+                player.sendMessage(plugin.getConfigManager().getMessage("contract.not-worker"));
+                return;
+            }
+
             handleSubmit(player, contract);
             player.closeInventory();
         }
@@ -183,13 +262,12 @@ public class GUIListener implements Listener {
         switch (contract.getType()) {
             case BOUNTY_HUNT -> plugin.getBountyManager().startTracking(player, contract);
             case XP_SERVICE -> {
-                // Check mode from metadata
                 String mode = me.bintanq.util.MetadataUtil.getXPMode(contract.getMetadata());
                 if ("ACTIVE_GRIND".equals(mode)) {
                     plugin.getXPServiceManager().startActiveGrind(player, contract);
                 }
             }
-            default -> {} // Item gathering: no special action on accept
+            default -> {}
         }
     }
 
@@ -197,8 +275,7 @@ public class GUIListener implements Listener {
         switch (contract.getType()) {
             case ITEM_GATHERING -> plugin.getItemGatheringManager().submitItems(player, contract);
             case XP_SERVICE -> plugin.getXPServiceManager().submitXP(player, contract);
-            case BOUNTY_HUNT -> player.sendMessage(plugin.getConfigManager().colorize(
-                    "&cBounties are completed by killing the target, not submitting."));
+            case BOUNTY_HUNT -> player.sendMessage(plugin.getConfigManager().getMessage("bounty.kill-to-complete"));
         }
     }
 

@@ -1,5 +1,6 @@
 # ============================================================
 # ContractBoard - messages.yml
+# ALL messages should be here - NO hardcoded messages!
 # ============================================================
 
 prefix: "&8[&6ContractBoard&8] &r"
@@ -11,6 +12,19 @@ unknown-command: "&cUnknown subcommand. Use &e/contract help&c."
 
 economy-not-found: "&cNo economy plugin found. Contact an admin."
 feature-disabled: "&cThis contract type is currently disabled."
+
+# Command Help Messages
+help:
+  header: "&6ContractBoard Commands:"
+  open: "&e/contract open &7- Open the contract board GUI"
+  post-bounty: "&e/contract post bounty <target> <reward> [true/false] &7- Post a bounty"
+  post-item: "&e/contract post item <material> <amount> <reward> &7- Post item contract"
+  post-xp: "&e/contract post xp <points> <reward> <INSTANT_DRAIN|ACTIVE_GRIND> &7- Post XP contract"
+  cancel: "&e/contract cancel <id> &7- Cancel your contract"
+  claim: "&e/contract claim <id> &7- Claim delivered items"
+  mail: "&e/contract mail &7- Collect your mail rewards"
+  top: "&e/contract top &7- View leaderboards"
+  reload: "&e/contract reload &7- Reload plugin config"
 
 contract:
   created: "&aContract created! &7(ID: &e{id}&7) Reward: &a{reward} &7| Tax paid: &c{tax}"
@@ -25,11 +39,20 @@ contract:
   reward-too-high: "&cThe maximum reward for this type is &e{max}&c."
   cannot-self: "&cYou cannot post a contract targeting yourself."
   limit-reached: "&cYou have reached your active contract limit &7(&e{limit}&7)&c. Complete or cancel existing ones first."
+  use-command: "&eUse &a/contract post &eto create a contract. See &a/contract help &efor syntax."
+  not-yours: "&cThis is not your contract!"
+  not-worker: "&cYou are not the worker for this contract!"
 
 bounty:
   target-offline: "&7Bounty target &e{target}&7 is offline. Tracking paused."
   target-killed: "&aYou killed &e{target}&a and earned &6{reward}&a!"
   anonymous-reveal: "&7The contractor chose to remain anonymous."
+  kill-to-complete: "&cBounties are completed by killing the target, not submitting."
+
+  # NEW: Test mode messages
+  test-mode-enabled: "&a&lBOUNTY TEST MODE ENABLED"
+  test-mode-info: "&7You can kill &eANY PLAYER &7to complete the bounty for testing."
+  test-mode-completed: "&aTest bounty completed! Killed &e{victim}&a (target was &e{target}&a)"
 
 item-gathering:
   not-enough-items: "&cYou don't have enough &e{item}&c. Need &e{amount}&c."
@@ -50,7 +73,63 @@ mail:
   empty: "&7Your mail is empty."
   collected: "&aCollected &e{amount}&a from mail."
 
-top:
+leaderboard:
   header: "&6=== {type} Leaderboard ==="
   entry: "&7#{rank} &e{player}&7: &a{amount}"
   empty: "&7No data yet."
+  top-contractors: "&b&lTop Contractors"
+  top-laborers: "&6&lTop Laborers"
+
+# GUI Display Text
+gui:
+  loading: "&7Loading..."
+  no-contracts: "&7No contracts available."
+  click-details: "&eClick for details"
+  click-accept: "&aClick to accept"
+  click-cancel: "&cClick to cancel"
+  click-submit: "&bClick to submit"
+  click-back: "&7Return to previous menu"
+
+  # Stats Display
+  stats:
+    posted: "&7Contracts Posted: &e{count}"
+    completed: "&7Contracts Completed: &e{count}"
+    spent: "&7Total Spent: &a${amount}"
+    earned: "&7Total Earned: &a${amount}"
+    active-as-contractor: "&7Active as Contractor: &e{count}"
+    active-as-worker: "&7Active as Worker: &e{count}"
+
+  # Contract Status
+  status:
+    open: "&aOPEN"
+    accepted: "&eACCEPTED"
+    paused: "&6PAUSED"
+    completed: "&2COMPLETED"
+    cancelled: "&cCANCELLED"
+    expired: "&7EXPIRED"
+
+  # Contract Details
+  detail:
+    contractor: "&7Contractor: &e{name}"
+    worker: "&7Worker: &e{name}"
+    reward: "&7Reward: &a${amount}"
+    tax: "&7Tax Paid: &c${amount}"
+    status: "&7Status: {status}"
+    expires: "&7Expires: &7{time}"
+    created: "&7Created: &7{time}"
+
+    # Type specific
+    bounty-target: "&7Target: &c{name}"
+    bounty-anonymous: "&7Anonymous: &e{value}"
+    item-material: "&7Material: &a{material}"
+    item-amount: "&7Amount: &a{amount}x"
+    xp-points: "&7XP Points: &b{points}"
+    xp-mode: "&7Mode: &e{mode}"
+
+# Time formatting
+time:
+  days: "{days}d {hours}h"
+  hours: "{hours}h {minutes}m"
+  minutes: "{minutes}m"
+  seconds: "{seconds}s"
+  expired: "&cExpired"

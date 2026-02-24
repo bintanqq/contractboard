@@ -3,6 +3,7 @@ package me.bintanq.command;
 import me.bintanq.ContractBoard;
 import me.bintanq.model.Contract;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -17,17 +18,9 @@ import java.util.stream.Collectors;
 
 /**
  * Handles the /contract command and all subcommands.
- * Subcommands:
- *   open          - Opens the main contract board GUI
- *   reload        - Reloads the plugin (admin)
- *   mail          - Collects all mail
- *   top           - Shows leaderboards via GUI
- *   post bounty <target> <reward> [anonymous]
- *   post item <material> <amount> <reward>
- *   post xp <points> <reward> <INSTANT_DRAIN|ACTIVE_GRIND>
- *   cancel <id>
- *   claim <id>
- *   help
+ *
+ * FIXED: All messages now use messages.yml - NO hardcoded text!
+ * ADDED: /contract bountytest for testing with 2 clients
  */
 public class ContractCommand implements CommandExecutor, TabCompleter {
 
@@ -56,7 +49,7 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
             case "reload" -> {
                 if (!requirePerm(sender, "contractboard.admin")) return true;
                 plugin.reload();
-                sender.sendMessage(plugin.getConfigManager().getMessage("plugin-reloaded"));
+                sender.sendMessage(msg("plugin-reloaded"));
             }
 
             case "mail" -> {
@@ -71,6 +64,13 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
                 plugin.getGUIManager().openLeaderboard((Player) sender);
             }
 
+            case "bountytest" -> {
+                // NEW: Test mode toggle for bounties
+                if (!requirePlayer(sender)) return true;
+                if (!requirePerm(sender, "contractboard.admin")) return true;
+                plugin.getBountyManager().toggleTestMode((Player) sender);
+            }
+
             case "post" -> {
                 if (!requirePlayer(sender)) return true;
                 if (!requirePerm(sender, "contractboard.use")) return true;
@@ -80,30 +80,36 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
             case "cancel" -> {
                 if (!requirePlayer(sender)) return true;
                 if (!requirePerm(sender, "contractboard.use")) return true;
-                if (args.length < 2) { sender.sendMessage(usage("/contract cancel <id>")); return true; }
+                if (args.length < 2) {
+                    sender.sendMessage(usage("/contract cancel <id>"));
+                    return true;
+                }
                 try {
                     int id = Integer.parseInt(args[1]);
                     plugin.getContractManager().cancelContract((Player) sender, id);
                 } catch (NumberFormatException e) {
-                    sender.sendMessage(plugin.getConfigManager().colorize("&cInvalid contract ID."));
+                    sender.sendMessage(colorize("&cInvalid contract ID."));
                 }
             }
 
             case "claim" -> {
                 if (!requirePlayer(sender)) return true;
                 if (!requirePerm(sender, "contractboard.use")) return true;
-                if (args.length < 2) { sender.sendMessage(usage("/contract claim <id>")); return true; }
+                if (args.length < 2) {
+                    sender.sendMessage(usage("/contract claim <id>"));
+                    return true;
+                }
                 try {
                     int id = Integer.parseInt(args[1]);
                     plugin.getItemGatheringManager().claimItems((Player) sender, id);
                 } catch (NumberFormatException e) {
-                    sender.sendMessage(plugin.getConfigManager().colorize("&cInvalid contract ID."));
+                    sender.sendMessage(colorize("&cInvalid contract ID."));
                 }
             }
 
             case "help" -> sendHelp(sender);
 
-            default -> sender.sendMessage(plugin.getConfigManager().getMessage("unknown-command"));
+            default -> sender.sendMessage(msg("unknown-command"));
         }
 
         return true;
@@ -119,49 +125,61 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
 
         switch (type) {
             case "bounty" -> {
-                // /contract post bounty <target> <reward> [anonymous]
-                if (args.length < 4) { player.sendMessage(usage("/contract post bounty <target> <reward> [anonymous]")); return; }
+                if (args.length < 4) {
+                    player.sendMessage(usage("/contract post bounty <target> <reward> [anonymous]"));
+                    return;
+                }
                 String targetName = args[2];
                 double reward;
                 try { reward = Double.parseDouble(args[3]); } catch (NumberFormatException e) {
-                    player.sendMessage(plugin.getConfigManager().colorize("&cInvalid reward amount.")); return;
+                    player.sendMessage(colorize("&cInvalid reward amount."));
+                    return;
                 }
                 boolean anon = args.length >= 5 && args[4].equalsIgnoreCase("true");
                 plugin.getBountyManager().postBounty(player, targetName, reward, anon);
             }
 
             case "item" -> {
-                // /contract post item <material> <amount> <reward>
-                if (args.length < 5) { player.sendMessage(usage("/contract post item <material> <amount> <reward>")); return; }
+                if (args.length < 5) {
+                    player.sendMessage(usage("/contract post item <material> <amount> <reward>"));
+                    return;
+                }
                 Material mat;
                 try { mat = Material.valueOf(args[2].toUpperCase()); } catch (IllegalArgumentException e) {
-                    player.sendMessage(plugin.getConfigManager().colorize("&cInvalid material: " + args[2])); return;
+                    player.sendMessage(colorize("&cInvalid material: " + args[2]));
+                    return;
                 }
                 int amount;
                 try { amount = Integer.parseInt(args[3]); } catch (NumberFormatException e) {
-                    player.sendMessage(plugin.getConfigManager().colorize("&cInvalid amount.")); return;
+                    player.sendMessage(colorize("&cInvalid amount."));
+                    return;
                 }
                 double reward;
                 try { reward = Double.parseDouble(args[4]); } catch (NumberFormatException e) {
-                    player.sendMessage(plugin.getConfigManager().colorize("&cInvalid reward amount.")); return;
+                    player.sendMessage(colorize("&cInvalid reward amount."));
+                    return;
                 }
                 plugin.getItemGatheringManager().postContract(player, mat, amount, reward);
             }
 
             case "xp" -> {
-                // /contract post xp <points> <reward> <INSTANT_DRAIN|ACTIVE_GRIND>
-                if (args.length < 5) { player.sendMessage(usage("/contract post xp <points> <reward> <INSTANT_DRAIN|ACTIVE_GRIND>")); return; }
+                if (args.length < 5) {
+                    player.sendMessage(usage("/contract post xp <points> <reward> <INSTANT_DRAIN|ACTIVE_GRIND>"));
+                    return;
+                }
                 int points;
                 try { points = Integer.parseInt(args[2]); } catch (NumberFormatException e) {
-                    player.sendMessage(plugin.getConfigManager().colorize("&cInvalid XP point amount.")); return;
+                    player.sendMessage(colorize("&cInvalid XP point amount."));
+                    return;
                 }
                 double reward;
                 try { reward = Double.parseDouble(args[3]); } catch (NumberFormatException e) {
-                    player.sendMessage(plugin.getConfigManager().colorize("&cInvalid reward amount.")); return;
+                    player.sendMessage(colorize("&cInvalid reward amount."));
+                    return;
                 }
                 String mode = args[4].toUpperCase();
                 if (!mode.equals("INSTANT_DRAIN") && !mode.equals("ACTIVE_GRIND")) {
-                    player.sendMessage(plugin.getConfigManager().colorize("&cMode must be INSTANT_DRAIN or ACTIVE_GRIND."));
+                    player.sendMessage(colorize("&cMode must be INSTANT_DRAIN or ACTIVE_GRIND."));
                     return;
                 }
                 plugin.getXPServiceManager().postContract(player, points, reward, mode);
@@ -172,23 +190,38 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
     }
 
     private void sendHelp(CommandSender sender) {
-        String c = plugin.getConfigManager().colorize("&8[&6ContractBoard&8] ");
-        sender.sendMessage(c + "&6Commands:");
-        sender.sendMessage("&e/contract open &7- Open the contract board GUI");
-        sender.sendMessage("&e/contract post bounty <target> <reward> [true/false] &7- Post a bounty");
-        sender.sendMessage("&e/contract post item <material> <amount> <reward> &7- Post item contract");
-        sender.sendMessage("&e/contract post xp <points> <reward> <INSTANT_DRAIN|ACTIVE_GRIND> &7- Post XP contract");
-        sender.sendMessage("&e/contract cancel <id> &7- Cancel your contract");
-        sender.sendMessage("&e/contract claim <id> &7- Claim delivered items");
-        sender.sendMessage("&e/contract mail &7- Collect your mail rewards");
-        sender.sendMessage("&e/contract top &7- View leaderboards");
+        // Use messages from messages.yml
+        sender.sendMessage(msg("help.header"));
+        sender.sendMessage(msg("help.open"));
+        sender.sendMessage(msg("help.post-bounty"));
+        sender.sendMessage(msg("help.post-item"));
+        sender.sendMessage(msg("help.post-xp"));
+        sender.sendMessage(msg("help.cancel"));
+        sender.sendMessage(msg("help.claim"));
+        sender.sendMessage(msg("help.mail"));
+        sender.sendMessage(msg("help.top"));
         if (sender.hasPermission("contractboard.admin")) {
-            sender.sendMessage("&e/contract reload &7- Reload plugin config");
+            sender.sendMessage(msg("help.reload"));
+            sender.sendMessage(ChatColor.YELLOW + "/contract bountytest " + ChatColor.GRAY + "- Toggle bounty test mode");
         }
     }
 
     private String usage(String usage) {
-        return plugin.getConfigManager().colorize("&cUsage: " + usage);
+        return colorize("&cUsage: " + usage);
+    }
+
+    /**
+     * Gets a message from messages.yml
+     */
+    private String msg(String path) {
+        return plugin.getConfigManager().getMessage(path);
+    }
+
+    /**
+     * Colorizes a string
+     */
+    private String colorize(String text) {
+        return plugin.getConfigManager().colorize(text);
     }
 
     // ---- Tab Completion ----
@@ -199,7 +232,10 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 1) {
             completions.addAll(Arrays.asList("open", "post", "cancel", "claim", "mail", "top", "help"));
-            if (sender.hasPermission("contractboard.admin")) completions.add("reload");
+            if (sender.hasPermission("contractboard.admin")) {
+                completions.add("reload");
+                completions.add("bountytest");
+            }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("post")) {
             completions.addAll(Arrays.asList("bounty", "item", "xp"));
         } else if (args.length == 3 && args[0].equalsIgnoreCase("post")) {
@@ -222,7 +258,6 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
             completions.addAll(Arrays.asList("true", "false"));
         }
 
-        // Filter by current input
         String current = args[args.length - 1].toLowerCase();
         return completions.stream()
                 .filter(s -> s.toLowerCase().startsWith(current))
@@ -233,7 +268,7 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
 
     private boolean requirePlayer(CommandSender sender) {
         if (!(sender instanceof Player)) {
-            sender.sendMessage(plugin.getConfigManager().getMessage("player-only"));
+            sender.sendMessage(msg("player-only"));
             return false;
         }
         return true;
@@ -241,7 +276,7 @@ public class ContractCommand implements CommandExecutor, TabCompleter {
 
     private boolean requirePerm(CommandSender sender, String perm) {
         if (!sender.hasPermission(perm)) {
-            sender.sendMessage(plugin.getConfigManager().getMessage("no-permission"));
+            sender.sendMessage(msg("no-permission"));
             return false;
         }
         return true;

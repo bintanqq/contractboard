@@ -1,214 +1,400 @@
 # ============================================================
 # ContractBoard - gui.yml
-# Fully customizable GUI layout
-# Supports color codes, item types, custom names/lore, slots
+# Fully customizable GUI layout - IMPROVED VERSION
 # ============================================================
 
 # --- Main Board GUI ---
 main-board:
-  title: "&8Contract Board"
+  title: "&8⟪ &6Contract Board &8⟫"
   rows: 6
   filler:
     enabled: true
     item: GRAY_STAINED_GLASS_PANE
     name: " "
   buttons:
+    player-stats:
+      slot: 4
+      item: PLAYER_HEAD
+      skull-owner: "{player}"  # Will be replaced with player name
+      name: "&e&l{player}'s Stats"
+      lore:
+        - "&7View your contract statistics"
+        - ""
+        - "&7Posted: &e{posted}"
+        - "&7Completed: &e{completed}"
+        - "&7Spent: &a${spent}"
+        - "&7Earned: &a${earned}"
+        - ""
+        - "&eClick to view details!"
+
     bounty-hunt:
       slot: 20
       item: PLAYER_HEAD
+      skull-texture: "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYzM1OGE1OTVjYmQ1ZGVmYWI4Nzg5YTk3NTcyNTFhYzY4ZDE3NzZlYTFiN2JkN2E4YmRjZjU3MzYzMzExOCJ9fX0="
       name: "&c&lBounty Hunt"
       lore:
         - "&7Place a price on a player's head."
-        - "&7Min reward: &e{min}"
+        - "&7Hunters will track them down!"
         - ""
-        - "&eClick to browse bounties."
+        - "&7Min reward: &e$100"
+        - "&7Max reward: &e$1,000,000"
+        - ""
+        - "&eClick to browse bounties!"
+
     item-gathering:
       slot: 22
       item: CHEST
       name: "&a&lItem Gathering"
       lore:
         - "&7Request items from other players."
-        - "&7Reward held in escrow."
+        - "&7Reward held in escrow until delivered."
         - ""
-        - "&eClick to browse contracts."
+        - "&7Min reward: &e$10"
+        - "&7Max reward: &e$500,000"
+        - ""
+        - "&eClick to browse contracts!"
+
     xp-services:
       slot: 24
       item: EXPERIENCE_BOTTLE
       name: "&b&lXP Services"
       lore:
         - "&7Buy or sell XP between players."
+        - "&7Two modes: Instant Drain or Active Grind"
         - ""
-        - "&eClick to browse contracts."
+        - "&7Min reward: &e$10"
+        - "&7Max reward: &e$200,000"
+        - ""
+        - "&eClick to browse contracts!"
+
+    my-contracts:
+      slot: 48
+      item: WRITABLE_BOOK
+      name: "&d&lMy Contracts"
+      lore:
+        - "&7View your active contracts"
+        - ""
+        - "&eAs Contractor: &7{posted}"
+        - "&aAs Worker: &7{working}"
+        - ""
+        - "&eClick to manage!"
+
     leaderboard:
       slot: 49
       item: GOLD_BLOCK
       name: "&6&lLeaderboards"
       lore:
-        - "&7View top contractors and laborers."
+        - "&7View top contractors and laborers"
         - ""
-        - "&eClick to open."
+        - "&eClick to open!"
+
     mail:
       slot: 45
       item: ENDER_CHEST
       name: "&d&lCollection Mail"
       lore:
-        - "&7Claim expired or completed rewards."
+        - "&7Claim expired or completed rewards"
         - ""
-        - "&eClick to open."
+        - "&7Pending: &e{mail_count} items"
+        - ""
+        - "&eClick to collect!"
+
     close:
       slot: 53
       item: BARRIER
       name: "&c&lClose"
       lore:
-        - "&7Close this menu."
+        - "&7Close this menu"
 
-# --- Contract List GUI (shared layout for all types) ---
+# --- Contract List GUI ---
 contract-list:
-  title: "&8{type} Contracts"
+  title: "&8⟪ &6{type} Contracts &8⟫"
   rows: 6
   filler:
     enabled: true
     item: GRAY_STAINED_GLASS_PANE
     name: " "
-  # Slots 0-44 are used for contract entries
   navigation:
     prev-page:
       slot: 45
       item: ARROW
-      name: "&ePrevious Page"
-      lore: []
+      name: "&e◀ Previous Page"
+      lore:
+        - "&7Page {page}"
     next-page:
       slot: 53
       item: ARROW
-      name: "&eNext Page"
-      lore: []
+      name: "&eNext Page ▶"
+      lore:
+        - "&7Page {page}"
     back:
       slot: 49
       item: BARRIER
-      name: "&cBack"
+      name: "&c✖ Back"
       lore:
-        - "&7Return to main board."
+        - "&7Return to main board"
     new-contract:
       slot: 47
-      item: WRITABLE_BOOK
-      name: "&a&lPost New Contract"
+      item: EMERALD
+      name: "&a&l+ Post New Contract"
       lore:
-        - "&eClick to create a new contract."
+        - "&7Create a new contract"
+        - ""
+        - "&eUse: &a/contract post"
+        - "&7See &a/contract help &7for syntax"
 
-# --- Contract Detail / Confirm GUI ---
+# --- Contract Detail GUI ---
 contract-detail:
-  title: "&8Contract Details"
-  rows: 4
+  title: "&8⟪ &6Contract #{id} &8⟫"
+  rows: 5
   filler:
     enabled: true
     item: GRAY_STAINED_GLASS_PANE
     name: " "
+
+  # Contract info will be displayed in slot 13 (center)
+  info-slot: 13
+
   buttons:
     accept:
-      slot: 20
+      slot: 29
       item: LIME_CONCRETE
-      name: "&a&lAccept Contract"
+      name: "&a&l✔ Accept Contract"
       lore:
-        - "&7Accept and begin working."
+        - "&7Accept and begin working"
         - ""
-        - "&aClick to confirm."
+        - "&aClick to confirm!"
+
     cancel:
-      slot: 24
+      slot: 33
       item: RED_CONCRETE
-      name: "&c&lCancel Contract"
+      name: "&c&l✖ Cancel Contract"
       lore:
-        - "&7Cancel this contract."
-        - "&cTax is non-refundable."
+        - "&7Cancel this contract"
+        - "&cTax is non-refundable!"
         - ""
-        - "&cClick to cancel."
+        - "&cClick to cancel"
+
     submit:
-      slot: 22
+      slot: 31
       item: EMERALD
-      name: "&b&lSubmit Work"
+      name: "&b&l✓ Submit Work"
       lore:
-        - "&7Submit your completed work."
+        - "&7Submit your completed work"
         - ""
-        - "&eClick to submit."
+        - "&eClick to submit!"
+
+    back:
+      slot: 40
+      item: ARROW
+      name: "&e◀ Back"
+      lore:
+        - "&7Return to contract list"
+
+# --- Player Stats GUI ---
+player-stats:
+  title: "&8⟪ &e{player}'s Statistics &8⟫"
+  rows: 4
+  filler:
+    enabled: true
+    item: PURPLE_STAINED_GLASS_PANE
+    name: " "
+
+  buttons:
+    profile:
+      slot: 4
+      item: PLAYER_HEAD
+      skull-owner: "{player}"
+      name: "&e&l{player}"
+      lore:
+        - "&7Member since: &e{joined}"
+        - ""
+        - "&6&lOverall Statistics"
+        - "&7Total Contracts Posted: &e{posted}"
+        - "&7Total Contracts Completed: &e{completed}"
+        - "&7Total Money Spent: &a${spent}"
+        - "&7Total Money Earned: &a${earned}"
+
+    active-contractor:
+      slot: 20
+      item: DIAMOND
+      name: "&b&lAs Contractor"
+      lore:
+        - "&7Your active posted contracts"
+        - ""
+        - "&7Active: &e{active_posted}"
+        - "&7Pending Review: &6{pending}"
+        - ""
+        - "&eClick to view!"
+
+    active-worker:
+      slot: 24
+      item: IRON_PICKAXE
+      name: "&a&lAs Worker"
+      lore:
+        - "&7Contracts you're working on"
+        - ""
+        - "&7In Progress: &e{in_progress}"
+        - "&7Ready to Submit: &a{ready}"
+        - ""
+        - "&eClick to view!"
+
     back:
       slot: 31
       item: BARRIER
-      name: "&cBack"
+      name: "&c◀ Back"
       lore:
-        - "&7Return to contract list."
+        - "&7Return to main board"
 
-# --- Leaderboard GUI ---
-leaderboard:
-  title: "&6Leaderboards"
-  rows: 6
-  filler:
-    enabled: true
-    item: YELLOW_STAINED_GLASS_PANE
-    name: " "
-  buttons:
-    top-contractors:
-      slot: 20
-      item: DIAMOND
-      name: "&b&lTop Contractors"
-      lore:
-        - "&7Players who spent the most."
-    top-laborers:
-      slot: 24
-      item: GOLD_INGOT
-      name: "&6&lTop Laborers"
-      lore:
-        - "&7Players who earned the most."
-    back:
-      slot: 49
-      item: BARRIER
-      name: "&cBack"
-      lore:
-        - "&7Return to main board."
-
-# --- Mail GUI ---
-mail-gui:
-  title: "&dCollection Mail"
+# --- My Contracts GUI (Ongoing) ---
+my-contracts:
+  title: "&8⟪ &dMy Contracts &8⟫"
   rows: 6
   filler:
     enabled: true
     item: PURPLE_STAINED_GLASS_PANE
     name: " "
+
+  tabs:
+    # Top row for tabs
+    as-contractor:
+      slot: 2
+      item: DIAMOND
+      name: "&b&lAs Contractor"
+      lore:
+        - "&7Contracts you posted"
+        - ""
+        - "&7Active: &e{count}"
+
+    as-worker:
+      slot: 6
+      item: IRON_PICKAXE
+      name: "&a&lAs Worker"
+      lore:
+        - "&7Contracts you accepted"
+        - ""
+        - "&7In Progress: &e{count}"
+
+  navigation:
+    back:
+      slot: 49
+      item: BARRIER
+      name: "&c◀ Back"
+      lore:
+        - "&7Return to main board"
+
+# --- Leaderboard GUI (Improved) ---
+leaderboard:
+  title: "&8⟪ &6Leaderboards &8⟫"
+  rows: 6
+  filler:
+    enabled: true
+    item: YELLOW_STAINED_GLASS_PANE
+    name: " "
+
+  headers:
+    contractors:
+      slot: 1
+      item: DIAMOND
+      name: "&b&l━━━ Top Contractors ━━━"
+      lore:
+        - "&7Players who spent the most"
+
+    laborers:
+      slot: 7
+      item: GOLD_INGOT
+      name: "&6&l━━━ Top Laborers ━━━"
+      lore:
+        - "&7Players who earned the most"
+
+  # Slots 10-16 for top contractors (vertical)
+  # Slots 19-25 for more contractors
+  # Slots 28-34 for laborers (vertical)
+  # Slots 37-43 for more laborers
+
+  buttons:
+    back:
+      slot: 49
+      item: BARRIER
+      name: "&c◀ Back"
+      lore:
+        - "&7Return to main board"
+
+# --- Mail GUI ---
+mail-gui:
+  title: "&8⟪ &dCollection Mail &8⟫"
+  rows: 6
+  filler:
+    enabled: true
+    item: PURPLE_STAINED_GLASS_PANE
+    name: " "
+
   buttons:
     collect-all:
       slot: 49
       item: HOPPER
-      name: "&a&lCollect All"
+      name: "&a&l✓ Collect All"
       lore:
-        - "&7Collect all pending rewards."
+        - "&7Collect all pending rewards"
+        - ""
+        - "&7Total: &a${total}"
+        - ""
+        - "&eClick to collect!"
+
     back:
       slot: 45
       item: BARRIER
-      name: "&cBack"
+      name: "&c◀ Back"
       lore:
-        - "&7Return to main board."
+        - "&7Return to main board"
 
-# --- Contract creation item (displayed in detail view) ---
-contract-item-display:
+# --- Contract Item Display Templates ---
+display-templates:
   bounty:
     item: PLAYER_HEAD
-    name: "&c{target}'s Head"
+    skull-owner: "{target}"  # Target's head
+    name: "&c&l⚔ Bounty: {target}"
     lore:
+      - "&7━━━━━━━━━━━━━━━━━━━━"
       - "&7Contractor: &e{contractor}"
-      - "&7Reward: &a{reward}"
+      - "&7Target: &c{target}"
+      - "&7Reward: &6${reward}"
+      - "&7Status: {status}"
+      - ""
       - "&7Anonymous: &e{anonymous}"
       - "&7Expires: &7{expires}"
+      - "&7━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "{action}"
+
   item-gathering:
-    item: "{item_type}"
-    name: "&a{amount}x {item_name}"
+    # Material is dynamic
+    name: "&a&l📦 Gather: {amount}x {material}"
     lore:
+      - "&7━━━━━━━━━━━━━━━━━━━━"
       - "&7Contractor: &e{contractor}"
-      - "&7Reward: &a{reward}"
-      - "&7Status: &e{status}"
+      - "&7Material: &a{material}"
+      - "&7Amount: &a{amount}x"
+      - "&7Reward: &6${reward}"
+      - "&7Status: {status}"
+      - ""
       - "&7Expires: &7{expires}"
+      - "&7━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "{action}"
+
   xp-services:
     item: EXPERIENCE_BOTTLE
-    name: "&b{xp_amount} XP Points"
+    name: "&b&l✦ XP Service: {points} Points"
     lore:
+      - "&7━━━━━━━━━━━━━━━━━━━━"
       - "&7Contractor: &e{contractor}"
-      - "&7Reward: &a{reward}"
+      - "&7XP Points: &b{points}"
       - "&7Mode: &e{mode}"
+      - "&7Reward: &6${reward}"
+      - "&7Status: {status}"
+      - ""
       - "&7Expires: &7{expires}"
+      - "&7━━━━━━━━━━━━━━━━━━━━"
+      - ""
+      - "{action}"

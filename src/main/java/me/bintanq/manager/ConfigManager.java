@@ -13,7 +13,7 @@ import java.util.List;
 
 /**
  * Centralizes access to all plugin configurations.
- * All getters are typed — the rest of the code never touches raw config paths.
+ * ADDED: Support for announcement settings
  */
 public class ConfigManager {
 
@@ -48,6 +48,30 @@ public class ConfigManager {
     public boolean isBountyEnabled() { return config.getBoolean("features.bounty-hunt", true); }
     public boolean isItemGatheringEnabled() { return config.getBoolean("features.item-gathering", true); }
     public boolean isXPServiceEnabled() { return config.getBoolean("features.xp-services", true); }
+
+    // ---- Announcement Settings ----
+
+    public boolean isAnnouncementEnabled() {
+        return config.getBoolean("announcements.enabled", true);
+    }
+
+    public boolean isAnnouncementEnabled(ContractType type) {
+        String path = switch (type) {
+            case BOUNTY_HUNT -> "announcements.bounty-hunt.enabled";
+            case ITEM_GATHERING -> "announcements.item-gathering.enabled";
+            case XP_SERVICE -> "announcements.xp-services.enabled";
+        };
+        return config.getBoolean(path, true);
+    }
+
+    public List<String> getAnnouncementMessages(ContractType type) {
+        String path = switch (type) {
+            case BOUNTY_HUNT -> "announcements.bounty-hunt.messages";
+            case ITEM_GATHERING -> "announcements.item-gathering.messages";
+            case XP_SERVICE -> "announcements.xp-services.messages";
+        };
+        return config.getStringList(path);
+    }
 
     // ---- Tax Rates ----
 
@@ -90,39 +114,25 @@ public class ConfigManager {
 
     // ---- Contract Limits ----
 
-    /**
-     * Returns the maximum number of active contracts a player may have simultaneously.
-     *
-     * Resolution order:
-     * 1. contractboard.max.unlimited → no limit (Integer.MAX_VALUE)
-     * 2. contractboard.max.<n>       → highest matching node wins
-     * 3. config default-max          → fallback
-     */
     public int getContractLimit(Player player) {
         if (player.hasPermission("contractboard.max.unlimited")) {
             return Integer.MAX_VALUE;
         }
 
-        // Scan permission nodes contractboard.max.1 .. contractboard.max.999
-        // We scan the attached permissions rather than a hard-coded list so
-        // server owners can define any value in their permission manager.
         int highest = -1;
         for (org.bukkit.permissions.PermissionAttachmentInfo pai : player.getEffectivePermissions()) {
             String perm = pai.getPermission().toLowerCase();
-            if (!pai.getValue()) continue; // negated permission, skip
+            if (!pai.getValue()) continue;
             if (!perm.startsWith("contractboard.max.")) continue;
             String suffix = perm.substring("contractboard.max.".length());
             try {
                 int val = Integer.parseInt(suffix);
                 if (val > highest) highest = val;
-            } catch (NumberFormatException ignored) {
-                // e.g. "contractboard.max.unlimited" already handled above
-            }
+            } catch (NumberFormatException ignored) {}
         }
 
         if (highest >= 0) return highest;
 
-        // Fallback to config
         return config.getInt("contract-limits.default-max", 3);
     }
 
@@ -168,6 +178,7 @@ public class ConfigManager {
     // ---- GUI ----
 
     public FileConfiguration getGuiConfig() { return gui; }
+    public FileConfiguration getConfig() { return config; }
 
     // ---- Utility ----
 

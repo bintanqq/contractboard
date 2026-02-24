@@ -8,6 +8,52 @@ features:
   item-gathering: true
   xp-services: true
 
+# --- Announcement Settings ---
+# Broadcasts to all players when a contract is posted
+announcements:
+  enabled: true
+
+  bounty-hunt:
+    enabled: true
+    messages:
+      - "&8&m                                                   "
+      - "&c&l[!] NEW BOUNTY CONTRACT"
+      - ""
+      - "&7Contractor: &e{contractor}"
+      - "&7Target: &c{target}"
+      - "&7Reward: &6{reward}"
+      - "&7Anonymous: &e{anonymous}"
+      - ""
+      - "&eType &a/contract open &eto view and accept!"
+      - "&8&m                                                   "
+
+  item-gathering:
+    enabled: true
+    messages:
+      - "&8&m                                                   "
+      - "&a&l[!] NEW ITEM GATHERING CONTRACT"
+      - ""
+      - "&7Contractor: &e{contractor}"
+      - "&7Item: &a{item} &7x&a{amount}"
+      - "&7Reward: &6{reward}"
+      - ""
+      - "&eType &a/contract open &eto view and accept!"
+      - "&8&m                                                   "
+
+  xp-services:
+    enabled: true
+    messages:
+      - "&8&m                                                   "
+      - "&b&l[!] NEW XP SERVICE CONTRACT"
+      - ""
+      - "&7Contractor: &e{contractor}"
+      - "&7XP Points: &b{xp_points}"
+      - "&7Mode: &e{mode}"
+      - "&7Reward: &6{reward}"
+      - ""
+      - "&eType &a/contract open &eto view and accept!"
+      - "&8&m                                                   "
+
 # --- Tax Rates ---
 # Tax is paid BY THE CONTRACTOR on top of the reward.
 # Example: reward=100, tax=10% → contractor pays 110 total.

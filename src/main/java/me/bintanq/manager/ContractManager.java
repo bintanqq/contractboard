@@ -4,7 +4,10 @@ import me.bintanq.ContractBoard;
 import me.bintanq.model.Contract;
 import me.bintanq.model.Contract.ContractStatus;
 import me.bintanq.model.Contract.ContractType;
+import me.bintanq.util.MetadataUtil;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -15,20 +18,7 @@ import java.util.function.Consumer;
 /**
  * Central manager for all contract lifecycle operations.
  *
- * Tax model:
- *   Contractor pays reward + tax at creation time.
- *   Worker always receives the full reward.
- *   Tax is a permanent money sink — not refunded on cancel.
- *   On cancel: only the reward (not tax) is sent to mail.
- *
- * Contract limits:
- *   Checked against player permissions / config before accepting payment.
- *   Counts OPEN + ACCEPTED + PAUSED contracts owned by the contractor.
- *
- * Expiration:
- *   Runs on a SINGLE scheduled async task every 30 seconds.
- *   Expired contracts are processed in a batch: all DB writes for that
- *   batch are submitted to the DB executor sequentially (no nested schedulers).
+ * ADDED: Announcement system for new contracts
  */
 public class ContractManager {
 
@@ -57,25 +47,14 @@ public class ContractManager {
 
     // ---- Expiration Task ----
 
-    /**
-     * Starts the periodic expiration checker.
-     * Runs fully async (no main-thread involvement unless economy/mail callbacks need it).
-     * 600 ticks = 30 seconds between checks.
-     */
     public void startExpirationTask() {
         expirationTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
                 plugin, this::processExpiredContracts, 1200L, 600L);
     }
 
-    /**
-     * Scans for expired contracts and handles them.
-     * Called from the async expiration thread — safe to call DB methods directly
-     * (DB executor is its own thread; we just submit work to it).
-     */
     private void processExpiredContracts() {
         long now = System.currentTimeMillis();
 
-        // Snapshot the entries to expire to avoid ConcurrentModificationException
         List<Contract> toExpire = activeContracts.values().stream()
                 .filter(c -> c.isActive() && c.getExpiresAt() < now)
                 .toList();
@@ -83,14 +62,11 @@ public class ContractManager {
         if (toExpire.isEmpty()) return;
 
         for (Contract c : toExpire) {
-            // Remove from cache immediately so no new operations target this contract
             activeContracts.remove(c.getId());
             c.setStatus(ContractStatus.EXPIRED);
 
-            // Persist status change
             plugin.getDatabaseManager().updateContract(c);
 
-            // Send reward back to contractor via mail (no callback needed)
             plugin.getDatabaseManager().insertMail(
                     c.getContractorUUID(),
                     c.getReward(),
@@ -106,18 +82,6 @@ public class ContractManager {
 
     // ---- Contract Creation ----
 
-    /**
-     * Creates and persists a contract.
-     *
-     * Tax model: contractor pays reward + tax.
-     * Worker receives reward. Tax is a permanent sink.
-     *
-     * @param contractor The player creating the contract
-     * @param type       Contract type
-     * @param reward     Amount the worker will receive (NOT including tax)
-     * @param metadata   Type-specific metadata string
-     * @param callback   Called with the saved contract on success (main thread)
-     */
     public void createContract(Player contractor, ContractType type, double reward,
                                String metadata, Consumer<Contract> callback) {
         ConfigManager cfg = plugin.getConfigManager();
@@ -129,19 +93,19 @@ public class ContractManager {
             case XP_SERVICE -> cfg.isXPServiceEnabled();
         };
         if (!enabled) {
-            contractor.sendMessage(cfg.getMessage("feature-disabled"));
+            contractor.sendMessage(stripColor(cfg.getMessage("feature-disabled")));
             return;
         }
 
         // 2. Price validation
         if (reward < cfg.getMinPrice(type)) {
-            contractor.sendMessage(cfg.getMessage("contract.reward-too-low")
-                    .replace("{min}", String.valueOf(cfg.getMinPrice(type))));
+            contractor.sendMessage(stripColor(cfg.getMessage("contract.reward-too-low")
+                    .replace("{min}", String.valueOf(cfg.getMinPrice(type)))));
             return;
         }
         if (reward > cfg.getMaxPrice(type)) {
-            contractor.sendMessage(cfg.getMessage("contract.reward-too-high")
-                    .replace("{max}", String.valueOf(cfg.getMaxPrice(type))));
+            contractor.sendMessage(stripColor(cfg.getMessage("contract.reward-too-high")
+                    .replace("{max}", String.valueOf(cfg.getMaxPrice(type)))));
             return;
         }
 
@@ -149,24 +113,24 @@ public class ContractManager {
         int activeOwned = countActiveContractsByContractor(contractor.getUniqueId());
         int limit = cfg.getContractLimit(contractor);
         if (activeOwned >= limit) {
-            contractor.sendMessage(cfg.getMessage("contract.limit-reached")
-                    .replace("{limit}", limit == Integer.MAX_VALUE ? "unlimited" : String.valueOf(limit)));
+            contractor.sendMessage(stripColor(cfg.getMessage("contract.limit-reached")
+                    .replace("{limit}", limit == Integer.MAX_VALUE ? "unlimited" : String.valueOf(limit))));
             return;
         }
 
-        // 4. Economy check — contractor pays reward + tax
+        // 4. Economy check
         if (!plugin.hasEconomy()) {
-            contractor.sendMessage(cfg.getMessage("economy-not-found"));
+            contractor.sendMessage(stripColor(cfg.getMessage("economy-not-found")));
             return;
         }
 
         double taxRate = cfg.getTaxRate(type);
         double tax = reward * (taxRate / 100.0);
-        double totalCost = reward + tax; // reward → escrow, tax → permanent sink
+        double totalCost = reward + tax;
 
         if (!plugin.getEconomy().has(contractor, totalCost)) {
-            contractor.sendMessage(cfg.getMessage("contract.insufficient-funds")
-                    .replace("{amount}", String.format("%.2f", totalCost)));
+            contractor.sendMessage(stripColor(cfg.getMessage("contract.insufficient-funds")
+                    .replace("{amount}", String.format("%.2f", totalCost))));
             return;
         }
 
@@ -185,11 +149,11 @@ public class ContractManager {
             if (inserted == null) {
                 // DB failure — refund everything
                 plugin.getEconomy().depositPlayer(contractor, totalCost);
-                contractor.sendMessage(cfg.colorize("&cFailed to create contract. Refunded."));
+                contractor.sendMessage(stripColor(cfg.colorize("&cFailed to create contract. Refunded.")));
                 return;
             }
 
-            // Add to cache on main thread (safe)
+            // Add to cache
             activeContracts.put(inserted.getId(), inserted);
 
             // Update leaderboard stats
@@ -197,13 +161,107 @@ public class ContractManager {
                     contractor.getUniqueId(), contractor.getName(), totalCost);
 
             // Confirm to player
-            contractor.sendMessage(cfg.getMessage("contract.created")
+            contractor.sendMessage(stripColor(cfg.getMessage("contract.created")
                     .replace("{id}", String.valueOf(inserted.getId()))
                     .replace("{reward}", String.format("%.2f", reward))
-                    .replace("{tax}", String.format("%.2f", tax)));
+                    .replace("{tax}", String.format("%.2f", tax))));
+
+            // ANNOUNCEMENT: Broadcast to all players
+            broadcastAnnouncement(inserted, contractor);
 
             if (callback != null) callback.accept(inserted);
         });
+    }
+
+    /**
+     * Broadcasts an announcement when a new contract is created
+     * ADDED: Announcement system with customizable messages
+     */
+    private void broadcastAnnouncement(Contract contract, Player contractor) {
+        ConfigManager cfg = plugin.getConfigManager();
+
+        // Check if announcements are enabled globally
+        if (!cfg.getConfig().getBoolean("announcements.enabled", true)) {
+            return;
+        }
+
+        String path = switch (contract.getType()) {
+            case BOUNTY_HUNT -> "announcements.bounty-hunt";
+            case ITEM_GATHERING -> "announcements.item-gathering";
+            case XP_SERVICE -> "announcements.xp-services";
+        };
+
+        // Check if this specific type has announcements enabled
+        if (!cfg.getConfig().getBoolean(path + ".enabled", true)) {
+            return;
+        }
+
+        List<String> messages = cfg.getConfig().getStringList(path + ".messages");
+        if (messages.isEmpty()) return;
+
+        // Replace placeholders based on contract type
+        List<String> finalMessages = new ArrayList<>();
+        for (String msg : messages) {
+            msg = msg.replace("{contractor}", contractor.getName());
+            msg = msg.replace("{reward}", String.format("%.2f", contract.getReward()));
+            msg = msg.replace("{id}", String.valueOf(contract.getId()));
+
+            // Type-specific placeholders
+            switch (contract.getType()) {
+                case BOUNTY_HUNT -> {
+                    String target = MetadataUtil.getBountyTargetName(contract.getMetadata());
+                    boolean anon = MetadataUtil.isBountyAnonymous(contract.getMetadata());
+                    msg = msg.replace("{target}", target);
+                    msg = msg.replace("{anonymous}", anon ? "Yes" : "No");
+                }
+                case ITEM_GATHERING -> {
+                    String material = MetadataUtil.getItemMaterial(contract.getMetadata());
+                    int amount = MetadataUtil.getItemAmount(contract.getMetadata());
+                    msg = msg.replace("{item}", formatMaterial(material));
+                    msg = msg.replace("{amount}", String.valueOf(amount));
+                }
+                case XP_SERVICE -> {
+                    int points = MetadataUtil.getXPPoints(contract.getMetadata());
+                    String mode = MetadataUtil.getXPMode(contract.getMetadata());
+                    msg = msg.replace("{xp_points}", String.valueOf(points));
+                    msg = msg.replace("{mode}", mode.replace("_", " "));
+                }
+            }
+
+            finalMessages.add(cfg.colorize(msg));
+        }
+
+        // Broadcast to all online players
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            for (String msg : finalMessages) {
+                player.sendMessage(msg);
+            }
+        }
+    }
+
+    /**
+     * Formats a material name for display (e.g., DIAMOND_SWORD -> Diamond Sword)
+     */
+    private String formatMaterial(String material) {
+        try {
+            Material mat = Material.valueOf(material);
+            String[] words = mat.name().toLowerCase().split("_");
+            StringBuilder result = new StringBuilder();
+            for (String word : words) {
+                if (result.length() > 0) result.append(" ");
+                result.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+            }
+            return result.toString();
+        } catch (IllegalArgumentException e) {
+            return material;
+        }
+    }
+
+    /**
+     * Strips color codes for clean output
+     */
+    private String stripColor(String message) {
+        return ChatColor.stripColor(ChatColor.translateAlternateColorCodes('&', message));
     }
 
     // ---- Contract Acceptance ----
@@ -211,15 +269,15 @@ public class ContractManager {
     public void acceptContract(Player worker, int contractId) {
         Contract contract = activeContracts.get(contractId);
         if (contract == null) {
-            worker.sendMessage(plugin.getConfigManager().getMessage("contract.not-found"));
+            worker.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.not-found")));
             return;
         }
         if (contract.getStatus() != ContractStatus.OPEN) {
-            worker.sendMessage(plugin.getConfigManager().getMessage("contract.already-accepted"));
+            worker.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.already-accepted")));
             return;
         }
         if (contract.getContractorUUID().equals(worker.getUniqueId())) {
-            worker.sendMessage(plugin.getConfigManager().getMessage("contract.cannot-self"));
+            worker.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.cannot-self")));
             return;
         }
 
@@ -227,20 +285,16 @@ public class ContractManager {
         contract.setStatus(ContractStatus.ACCEPTED);
         plugin.getDatabaseManager().updateContract(contract);
 
-        worker.sendMessage(plugin.getConfigManager().getMessage("contract.accepted")
-                .replace("{id}", String.valueOf(contractId)));
+        worker.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.accepted")
+                .replace("{id}", String.valueOf(contractId))));
     }
 
     // ---- Contract Cancellation ----
 
-    /**
-     * Cancels a contract. Only the contractor can cancel.
-     * Tax is NOT refunded. Reward is sent to contractor's mail.
-     */
     public void cancelContract(Player player, int contractId) {
         Contract contract = activeContracts.get(contractId);
         if (contract == null || !contract.getContractorUUID().equals(player.getUniqueId())) {
-            player.sendMessage(plugin.getConfigManager().getMessage("contract.not-found"));
+            player.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.not-found")));
             return;
         }
 
@@ -256,22 +310,18 @@ public class ContractManager {
                 null
         );
 
-        player.sendMessage(plugin.getConfigManager().getMessage("contract.cancelled")
-                .replace("{id}", String.valueOf(contractId)));
+        player.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.cancelled")
+                .replace("{id}", String.valueOf(contractId))));
     }
 
     // ---- Contract Completion ----
 
-    /**
-     * Marks a contract complete and pays the worker the full reward.
-     * Must be called on the main thread (economy API requirement).
-     */
     public void completeContract(Contract contract, Player worker) {
         activeContracts.remove(contract.getId());
         contract.setStatus(ContractStatus.COMPLETED);
         plugin.getDatabaseManager().updateContract(contract);
 
-        // Pay worker the full reward (tax was already paid by contractor at creation)
+        // Pay worker the full reward
         if (plugin.hasEconomy()) {
             plugin.getEconomy().depositPlayer(worker, contract.getReward());
         }
@@ -280,9 +330,9 @@ public class ContractManager {
         plugin.getLeaderboardManager().recordEarned(
                 worker.getUniqueId(), worker.getName(), contract.getReward());
 
-        worker.sendMessage(plugin.getConfigManager().getMessage("contract.completed")
+        worker.sendMessage(stripColor(plugin.getConfigManager().getMessage("contract.completed")
                 .replace("{id}", String.valueOf(contract.getId()))
-                .replace("{reward}", String.format("%.2f", contract.getReward())));
+                .replace("{reward}", String.format("%.2f", contract.getReward()))));
     }
 
     // ---- Queries ----
@@ -308,9 +358,6 @@ public class ContractManager {
                 .toList();
     }
 
-    /**
-     * Counts active (OPEN/ACCEPTED/PAUSED) contracts where this UUID is the contractor.
-     */
     public int countActiveContractsByContractor(UUID contractorUUID) {
         return (int) activeContracts.values().stream()
                 .filter(c -> c.isActive() && c.getContractorUUID().equals(contractorUUID))
